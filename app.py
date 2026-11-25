@@ -12,61 +12,95 @@ import pydeck as pdk
 import requests
 import streamlit as st
 
-# Configuração da página
+# Configuração da página e tema claro consistente
 st.set_page_config(
     page_title="Alerta SP — Mobilidade Segura em Dias de Chuva",
     page_icon="🌧️",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
 
 # Estilo visual acessível e de alto contraste
 st.markdown(
     """
     <style>
-        .stApp {
-            background-color: #F8FAFC;
-            color: #0F172A;
+        /* Área principal clara */
+        .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"] {
+            background-color: #F8FAFC !important;
+            color: #0F172A !important;
             font-size: 16px;
         }
-        /* Garante rótulos escuros e legíveis em formulários, inputs e selects */
-        label, .stTextInput label, .stSelectbox label, .stTextArea label,
-        .stFileUploader label, .stSlider label, .stCheckbox label {
+
+        /* Barra lateral clara e legível sem precisar selecionar texto */
+        section[data-testid="stSidebar"],
+        section[data-testid="stSidebar"] > div,
+        [data-testid="stSidebarContent"] {
+            background-color: #F1F5F9 !important;
+            color: #0F172A !important;
+        }
+
+        section[data-testid="stSidebar"] h1,
+        section[data-testid="stSidebar"] h2,
+        section[data-testid="stSidebar"] h3,
+        section[data-testid="stSidebar"] p,
+        section[data-testid="stSidebar"] span,
+        section[data-testid="stSidebar"] label,
+        section[data-testid="stSidebar"] div[data-testid="stCaptionContainer"] {
+            color: #0F172A !important;
+        }
+
+        /* Rótulos e textos gerais da área principal */
+        [data-testid="stMain"] label,
+        [data-testid="stMain"] .stTextInput label,
+        [data-testid="stMain"] .stSelectbox label,
+        [data-testid="stMain"] .stTextArea label,
+        [data-testid="stMain"] .stFileUploader label,
+        [data-testid="stMain"] .stSlider label,
+        [data-testid="stMain"] .stCheckbox label {
             color: #0F172A !important;
             font-weight: 600 !important;
             font-size: 15px !important;
         }
-        .stMarkdown p, .stCaption, [data-testid="stCaptionContainer"] {
-            color: #1E293B !important;
+
+        [data-testid="stMain"] p,
+        [data-testid="stMain"] [data-testid="stCaptionContainer"] {
+            color: #1E293B;
         }
-        [data-testid="stFileUploaderDropzone"] {
-            background-color: #FFFFFF !important;
-            border: 1.5px dashed #94A3B8 !important;
-            color: #0F172A !important;
-        }
-        [data-testid="stFileUploaderDropzone"] span,
-        [data-testid="stFileUploaderDropzone"] small,
-        [data-testid="stFileUploaderDropzone"] div {
-            color: #1E293B !important;
-        }
+
+        /* Cabeçalho azul escuro: garante texto branco/claro com alto contraste */
         .header-box {
-            background-color: #1E3A8A;
-            color: #FFFFFF;
+            background-color: #1E3A8A !important;
+            color: #FFFFFF !important;
             padding: 24px 28px;
             border-radius: 14px;
             margin-bottom: 20px;
         }
         .header-box h1 {
-            color: #FFFFFF;
+            color: #FFFFFF !important;
             font-size: 30px;
             margin: 0 0 8px 0;
         }
         .header-box p {
-            color: #E2E8F0;
+            color: #F1F5F9 !important;
             font-size: 17px;
             margin: 0;
         }
+
+        /* Área de upload de arquivo */
+        [data-testid="stFileUploaderDropzone"] {
+            background-color: #FFFFFF !important;
+            border: 1.5px dashed #64748B !important;
+            color: #0F172A !important;
+        }
+        [data-testid="stFileUploaderDropzone"] span,
+        [data-testid="stFileUploaderDropzone"] small,
+        [data-testid="stFileUploaderDropzone"] div {
+            color: #0F172A !important;
+        }
+
+        /* Cartões e caixas informativas */
         .card-resumo {
-            background-color: #FFFFFF;
+            background-color: #FFFFFF !important;
             border-radius: 12px;
             padding: 18px 20px;
             border: 1px solid #CBD5E1;
@@ -75,7 +109,7 @@ st.markdown(
         .card-titulo {
             font-size: 15px;
             font-weight: 700;
-            color: #334155;
+            color: #334155 !important;
             margin-bottom: 6px;
         }
         .card-valor {
@@ -85,35 +119,35 @@ st.markdown(
         }
         .card-sub {
             font-size: 14px;
-            color: #334155;
+            color: #334155 !important;
             margin-top: 6px;
         }
         .privacidade-box {
-            background-color: #EFF6FF;
+            background-color: #EFF6FF !important;
             border-left: 4px solid #1E3A8A;
             padding: 12px 16px;
             border-radius: 8px;
-            color: #0F172A;
+            color: #0F172A !important;
             font-size: 15px;
             margin-bottom: 16px;
         }
         .escopo-box {
-            background-color: #FFFBEB;
+            background-color: #FFFBEB !important;
             border-left: 4px solid #D97706;
             padding: 12px 16px;
             border-radius: 8px;
-            color: #0F172A;
+            color: #0F172A !important;
             font-size: 15px;
             margin-bottom: 14px;
         }
         .legenda-box {
-            background-color: #FFFFFF;
+            background-color: #FFFFFF !important;
             border: 1px solid #CBD5E1;
             border-radius: 10px;
             padding: 12px 16px;
             margin-bottom: 12px;
             font-size: 15px;
-            color: #0F172A;
+            color: #0F172A !important;
         }
     </style>
     """,
