@@ -59,6 +59,15 @@ st.markdown(
             color: #475569;
             margin-top: 6px;
         }
+        .privacidade-box {
+            background-color: #EFF6FF;
+            border-left: 4px solid #1E3A8A;
+            padding: 12px 16px;
+            border-radius: 8px;
+            color: #1E293B;
+            font-size: 15px;
+            margin-bottom: 16px;
+        }
     </style>
     """,
     unsafe_allow_html=True,
@@ -78,6 +87,12 @@ BAIRROS_SP = {
     "Tatuapé": (-23.5403, -46.5764),
 }
 
+NIVEIS_AGUA = [
+    "Risco leve / Poças",
+    "Água na calçada",
+    "Intransitável - Água alta",
+]
+
 # Inicializa as ocorrências no estado da sessão
 if "ocorrencias" not in st.session_state:
     hora_atual = datetime.datetime.now().strftime("%H:%M")
@@ -88,9 +103,10 @@ if "ocorrencias" not in st.session_state:
             "bairro": "Itaquera",
             "lat": -23.5414,
             "lon": -46.4733,
-            "nivel": "Intransitável (Água alta)",
+            "nivel": "Intransitável - Água alta",
             "horario": hora_atual,
             "descricao": "Água acumulando perto da estação; ônibus com passagem lenta.",
+            "foto": None,
             "secou_votos": 0,
         },
         {
@@ -102,6 +118,7 @@ if "ocorrencias" not in st.session_state:
             "nivel": "Água na calçada",
             "horario": hora_atual,
             "descricao": "Calçada tomada pela água e trânsito parado nos arredores.",
+            "foto": None,
             "secou_votos": 0,
         },
         {
@@ -110,9 +127,10 @@ if "ocorrencias" not in st.session_state:
             "bairro": "Capão Redondo",
             "lat": -23.6686,
             "lon": -46.7806,
-            "nivel": "Intransitável (Água alta)",
+            "nivel": "Intransitável - Água alta",
             "horario": hora_atual,
             "descricao": "Trecho baixo com água alta; pedestres buscando ruas mais altas.",
+            "foto": None,
             "secou_votos": 0,
         },
         {
@@ -124,6 +142,7 @@ if "ocorrencias" not in st.session_state:
             "nivel": "Risco leve / Poças",
             "horario": hora_atual,
             "descricao": "Grandes poças na via e retenção no fluxo de veículos.",
+            "foto": None,
             "secou_votos": 0,
         },
         {
@@ -135,9 +154,13 @@ if "ocorrencias" not in st.session_state:
             "nivel": "Água na calçada",
             "horario": hora_atual,
             "descricao": "Acúmulo de água em ponto conhecido de chuva forte.",
+            "foto": None,
             "secou_votos": 0,
         },
     ]
+
+if "mensagem_sucesso" not in st.session_state:
+    st.session_state.mensagem_sucesso = None
 
 # Cabeçalho principal
 st.markdown(
@@ -248,3 +271,88 @@ for item in st.session_state.ocorrencias:
     ).add_to(mapa)
 
 st_folium(mapa, width="100%", height=500)
+
+# Seção Reportar Novo Alagamento
+st.divider()
+st.markdown("### 🚨 Reportar Novo Alagamento")
+
+if st.session_state.mensagem_sucesso:
+    st.success(st.session_state.mensagem_sucesso)
+    st.session_state.mensagem_sucesso = None
+
+st.markdown(
+    """
+    <div class="privacidade-box">
+        🔒 <strong>Sua privacidade importa:</strong> Para registrar um ponto, usamos apenas o seu apelido público (<code>@username</code>).
+        Não pedimos CPF nem endereço exato, e seu e-mail nunca é exibido publicamente.
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+with st.form("form_reportar_alagamento", clear_on_submit=True):
+    col_form1, col_form2 = st.columns(2)
+
+    with col_form1:
+        apelido_input = st.text_input(
+            "Apelido público (@username) *",
+            placeholder="Ex.: @maria_zl ou joao_sp",
+            help="Campo obrigatório. Aparecerá no registro no lugar dos seus dados pessoais.",
+        )
+        bairro_escolhido = st.selectbox(
+            "Bairro do alagamento *",
+            options=list(BAIRROS_SP.keys()),
+        )
+
+    with col_form2:
+        nivel_escolhido = st.selectbox(
+            "Nível da água *",
+            options=NIVEIS_AGUA,
+        )
+        foto_enviada = st.file_uploader(
+            "Foto do local (opcional)",
+            type=["png", "jpg", "jpeg"],
+            help="Ajude outras pessoas a visualizarem a situação do ponto.",
+        )
+
+    descricao_curta = st.text_area(
+        "Descrição curta (opcional — até 140 caracteres)",
+        max_chars=140,
+        placeholder="Ex.: Perto do ponto de ônibus, água subindo rápido na via.",
+    )
+
+    enviado = st.form_submit_button("Enviar Alerta", type="primary", use_container_width=True)
+
+    if enviado:
+        apelido_limpo = apelido_input.strip()
+        if not apelido_limpo:
+            st.error("Por favor, preencha o seu apelido público (@username) antes de enviar o alerta.")
+        else:
+            if not apelido_limpo.startswith("@"):
+                apelido_limpo = f"@{apelido_limpo}"
+
+            lat_bairro, lon_bairro = BAIRROS_SP[bairro_escolhido]
+            # Pequeno deslocamento proporcional ao ID para não sobrepor exatamente pinos no mesmo bairro
+            deslocamento = (len(st.session_state.ocorrencias) % 5) * 0.0025
+            novo_id = max([o["id"] for o in st.session_state.ocorrencias], default=0) + 1
+            hora_registro = datetime.datetime.now().strftime("%H:%M")
+
+            foto_bytes = foto_enviada.getvalue() if foto_enviada is not None else None
+            texto_descricao = descricao_curta.strip() if descricao_curta.strip() else "Ponto de alagamento informado pela comunidade."
+
+            nova_ocorrencia = {
+                "id": novo_id,
+                "usuario": apelido_limpo,
+                "bairro": bairro_escolhido,
+                "lat": lat_bairro + deslocamento,
+                "lon": lon_bairro - deslocamento,
+                "nivel": nivel_escolhido,
+                "horario": hora_registro,
+                "descricao": texto_descricao,
+                "foto": foto_bytes,
+                "secou_votos": 0,
+            }
+
+            st.session_state.ocorrencias.append(nova_ocorrencia)
+            st.session_state.mensagem_sucesso = "Obrigado por ajudar outros trabalhadores!"
+            st.rerun()
