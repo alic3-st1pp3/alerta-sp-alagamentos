@@ -249,9 +249,13 @@ with col3:
 st.markdown("### 🗺️ Mapa de Alagamentos em São Paulo")
 st.write("Clique em qualquer marcador vermelho no mapa para ver o bairro, o nível da água, o horário e os detalhes do registro.")
 
-# Centraliza o mapa no bairro de moradia selecionado
+# Centraliza o mapa no bairro de moradia selecionado (sem depender de tiles externos pagos)
 lat_centro, lon_centro = BAIRROS_SP[bairro_moradia]
-mapa = folium.Map(location=[lat_centro, lon_centro], zoom_start=12, tiles="CartoDB positron")
+mapa = folium.Map(
+    location=[lat_centro, lon_centro],
+    zoom_start=12,
+    tiles="OpenStreetMap",
+)
 
 for item in st.session_state.ocorrencias:
     popup_html = f"""
@@ -267,10 +271,10 @@ for item in st.session_state.ocorrencias:
         location=[item["lat"], item["lon"]],
         popup=folium.Popup(popup_html, max_width=260),
         tooltip=f"{item['bairro']} — {item['nivel']}",
-        icon=folium.Icon(color="red", icon="tint", prefix="fa"),
+        icon=folium.Icon(color="red", icon="info-sign"),
     ).add_to(mapa)
 
-st_folium(mapa, width="100%", height=500)
+st_folium(mapa, use_container_width=True, height=500, returned_objects=[])
 
 # Seção Reportar Novo Alagamento
 st.divider()
@@ -332,7 +336,6 @@ with st.form("form_reportar_alagamento", clear_on_submit=True):
                 apelido_limpo = f"@{apelido_limpo}"
 
             lat_bairro, lon_bairro = BAIRROS_SP[bairro_escolhido]
-            # Pequeno deslocamento proporcional ao ID para não sobrepor exatamente pinos no mesmo bairro
             deslocamento = (len(st.session_state.ocorrencias) % 5) * 0.0025
             novo_id = max([o["id"] for o in st.session_state.ocorrencias], default=0) + 1
             hora_registro = datetime.datetime.now().strftime("%H:%M")
