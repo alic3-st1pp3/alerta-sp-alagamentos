@@ -1,5 +1,9 @@
 import datetime
+import re
+import urllib.parse
+import feedparser
 import folium
+import requests
 import streamlit as st
 from streamlit_folium import st_folium
 
@@ -68,19 +72,20 @@ st.markdown(
             font-size: 15px;
             margin-bottom: 16px;
         }
-        .ocorrencia-card {
+        .legenda-box {
             background-color: #FFFFFF;
             border: 1px solid #E2E8F0;
-            border-radius: 12px;
-            padding: 16px 18px;
+            border-radius: 10px;
+            padding: 12px 16px;
             margin-bottom: 12px;
+            font-size: 15px;
         }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# 10 bairros reais de São Paulo com coordenadas aproximadas
+# Bairros e regiões reais de São Paulo com coordenadas aproximadas
 BAIRROS_SP = {
     "Itaquera": (-23.5414, -46.4733),
     "Lapa": (-23.5275, -46.7036),
@@ -92,6 +97,8 @@ BAIRROS_SP = {
     "Mooca": (-23.5558, -46.5978),
     "Grajaú": (-23.7764, -46.6889),
     "Tatuapé": (-23.5403, -46.5764),
+    "Jabaquara": (-23.6464, -46.6408),
+    "Butantã": (-23.5719, -46.7081),
 }
 
 NIVEIS_AGUA = [
@@ -100,10 +107,89 @@ NIVEIS_AGUA = [
     "Intransitável - Água alta",
 ]
 
-# Inicializa as ocorrências no estado da sessão
-if "ocorrencias" not in st.session_state:
+
+@st.cache_data(ttl=1800)
+def buscar_chuva_real_sp():
+    """Busca previsão real de precipitação (mm) e temperatura para São Paulo via Open-Meteo."""
+    url = (
+        "https://api.open-meteo.com/v1/forecast"
+        "?latitude=-23.5505&longitude=-46.6339"
+        "&daily=precipitation_sum,temperature_2m_max,temperature_2m_min"
+        "&timezone=America%2FSao_Paulo"
+    )
+    try:
+        resp = requests.get(url, timeout=8)
+        resp.raise_for_status()
+        data = resp.json().get("daily", {})
+        chuva_hoje = float(data.get("precipitation_sum", [0.0])[0] or 0.0)
+        temp_max = data.get("temperature_2m_max", [None])[0]
+        temp_min = data.get("temperature_2m_min", [None])[0]
+        return round(chuva_hoje, 1), temp_min, temp_max, True
+    except Exception:
+        return 12.0, None, None, False
+
+
+@st.cache_data(ttl=1800)
+def buscar_noticias_chuva_sp():
+    """Busca notícias recentes sobre alagamento e chuva em São Paulo via Google News RSS."""
+    query = urllib.parse.quote('("alagamento" OR "chuva forte" OR "enchente") "São Paulo"')
+    url = f"https://news.google.com/rss/search?q={query}&hl=pt-BR&gl=BR&ceid=BR:pt-419"
+    noticias = []
+    try:
+        feed = feedparser.parse(url)
+        for entry in feed.entries[:8]:
+            titulo = entry.get("title", "Notícia sem título")
+            link = entry.get("link", "")
+            publicado = entry.get("published", "")
+            fonte = entry.get("source", {}).get("title", "Imprensa local")
+
+            titulo_sem_acento = (
+                titulo.lower()
+                .replace("á", "a")
+                .replace("à", "a")
+                .replace("ã", "a")
+                .replace("â", "a")
+                .replace("é", "e")
+                .replace("ê", "e")
+                .replace("í", "i")
+                .replace("ó", "o")
+                .replace("ô", "o")
+                .replace("õ", "o")
+                .replace("ú", "u")
+                .replace("ç", "c")
+            )
+
+            bairro_detectado = None
+            for bairro in BAIRROS_SP:
+                bairro_limpo = (
+                    bairro.lower()
+                    .replace("á", "a")
+                    .replace("ã", "a")
+                    .replace("é", "e")
+                    .replace("ú", "u")
+                )
+                if re.search(rf"\b{re.escape(bairro_limpo)}\b", titulo_sem_acento):
+                    bairro_detectado = bairro
+                    break
+
+            noticias.append(
+                {
+                    "titulo": titulo,
+                    "link": link,
+                    "publicado": publicado,
+                    "fonte": fonte,
+                    "bairro_detectado": bairro_detectado,
+                }
+            )
+    except Exception:
+        pass
+    return noticias
+
+
+# Inicializa ocorrências de usuários no estado da sessão
+if "ocorrencias_usuarios" not in st.session_state:
     hora_atual = datetime.datetime.now().strftime("%H:%M")
-    st.session_state.ocorrencias = [
+    st.session_state.ocorrencias_usuarios = [
         {
             "id": 1,
             "usuario": "@carlos_zl",
@@ -128,93 +214,93 @@ if "ocorrencias" not in st.session_state:
             "foto": None,
             "secou_votos": 0,
         },
-        {
-            "id": 3,
-            "usuario": "@marcos_sul",
-            "bairro": "Capão Redondo",
-            "lat": -23.6686,
-            "lon": -46.7806,
-            "nivel": "Intransitável - Água alta",
-            "horario": hora_atual,
-            "descricao": "Trecho baixo com água alta; pedestres buscando ruas mais altas.",
-            "foto": None,
-            "secou_votos": 0,
-        },
-        {
-            "id": 4,
-            "usuario": "@bia_centro",
-            "bairro": "Sé",
-            "lat": -23.5505,
-            "lon": -46.6339,
-            "nivel": "Risco leve / Poças",
-            "horario": hora_atual,
-            "descricao": "Grandes poças na via e retenção no fluxo de veículos.",
-            "foto": None,
-            "secou_votos": 0,
-        },
-        {
-            "id": 5,
-            "usuario": "@rafa_mooca",
-            "bairro": "Mooca",
-            "lat": -23.5558,
-            "lon": -46.5978,
-            "nivel": "Água na calçada",
-            "horario": hora_atual,
-            "descricao": "Acúmulo de água em ponto conhecido de chuva forte.",
-            "foto": None,
-            "secou_votos": 0,
-        },
     ]
 
 if "mensagem_sucesso" not in st.session_state:
     st.session_state.mensagem_sucesso = None
+
+chuva_real_mm, temp_min, temp_max, clima_ok = buscar_chuva_real_sp()
+noticias_sp = buscar_noticias_chuva_sp()
+
+# Converte notícias com bairro identificado em pinos de notícia para o mapa
+pinos_noticias = []
+for idx, n in enumerate(noticias_sp):
+    bairro = n["bairro_detectado"]
+    if bairro and bairro in BAIRROS_SP:
+        lat_b, lon_b = BAIRROS_SP[bairro]
+        desloc = (idx % 4) * 0.0022
+        pinos_noticias.append(
+            {
+                "tipo": "noticia",
+                "bairro": bairro,
+                "lat": lat_b - desloc,
+                "lon": lon_b + desloc,
+                "titulo": n["titulo"],
+                "fonte": n["fonte"],
+                "link": n["link"],
+            }
+        )
 
 # Cabeçalho principal
 st.markdown(
     """
     <div class="header-box">
         <h1>🌧️ Alerta SP — Mobilidade Segura em Dias de Chuva</h1>
-        <p>Acompanhe a previsão de chuva, veja pontos de alagamento em São Paulo e planeje seu trajeto com mais tranquilidade.</p>
+        <p>Dados reais de chuva em São Paulo, notícias locais, relatos da comunidade e mapa de pontos críticos.</p>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-# Barra lateral com filtros e simulador de chuva
+# Barra lateral com filtros e opção de simulação manual
 with st.sidebar:
     st.header("🧭 Seu Trajeto e Chuva")
-    st.write("Escolha os bairros do seu dia a dia e simule o volume de chuva previsto para hoje.")
+    st.write("Selecione os bairros do seu trajeto diário.")
 
     lista_bairros = list(BAIRROS_SP.keys())
     bairro_moradia = st.selectbox("Bairro onde você mora", options=lista_bairros, index=0)
     bairro_trabalho = st.selectbox("Bairro onde você trabalha", options=lista_bairros, index=3)
 
-    chuva_mm = st.slider(
-        "Chuva prevista hoje (mm)",
-        min_value=0,
-        max_value=60,
-        value=18,
-        step=1,
-        help="Arraste para simular o volume de chuva esperado para o dia.",
-    )
+    st.divider()
+    st.subheader("🌦️ Clima Real (São Paulo)")
+    if clima_ok:
+        st.success(f"Previsão real hoje: **{chuva_real_mm} mm**")
+        if temp_min is not None and temp_max is not None:
+            st.caption(f"Temperatura prevista: {temp_min}°C a {temp_max}°C")
+    else:
+        st.warning("Sem conexão com a API meteorológica no momento; usando estimativa.")
 
-# Verifica se há pontos ativos nos bairros selecionados no trajeto
+    usar_simulacao = st.checkbox("Simular outro volume de chuva manualmente", value=False)
+    if usar_simulacao:
+        chuva_ativa_mm = float(
+            st.slider("Chuva simulada (mm)", min_value=0, max_value=80, value=int(chuva_real_mm), step=1)
+        )
+    else:
+        chuva_ativa_mm = chuva_real_mm
+
+    if st.button("🔄 Atualizar dados reais agora", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+
+# Verifica pontos ativos de usuários e notícias no trajeto
 bairros_trajeto = {bairro_moradia, bairro_trabalho}
-pontos_no_trajeto = [
-    item for item in st.session_state.ocorrencias if item["bairro"] in bairros_trajeto
+pontos_usuario_trajeto = [
+    item for item in st.session_state.ocorrencias_usuarios if item["bairro"] in bairros_trajeto
 ]
-tem_alagamento_trajeto = len(pontos_no_trajeto) > 0
+noticias_no_trajeto = [
+    item for item in pinos_noticias if item["bairro"] in bairros_trajeto
+]
+tem_alerta_trajeto = len(pontos_usuario_trajeto) > 0 or len(noticias_no_trajeto) > 0
 
-# Cálculo do nível de risco considerando chuva e pontos ativos no trajeto
-if tem_alagamento_trajeto:
+if tem_alerta_trajeto:
     risco_texto = "Risco Alto"
     risco_cor = "#DC2626"
-    risco_aviso = "Alagamento detectado no seu trajeto!"
-elif chuva_mm < 10:
+    risco_aviso = "Ponto ou notícia de alagamento no seu trajeto!"
+elif chuva_ativa_mm < 10:
     risco_texto = "Risco Baixo"
     risco_cor = "#059669"
     risco_aviso = "Trajeto livre de alertas críticos pela chuva."
-elif chuva_mm <= 30:
+elif chuva_ativa_mm <= 30:
     risco_texto = "Risco Moderado"
     risco_cor = "#D97706"
     risco_aviso = "Atenção: chance de poças e trânsito lento."
@@ -223,26 +309,29 @@ else:
     risco_cor = "#DC2626"
     risco_aviso = "Alerta: chuva forte com alto risco de alagamento."
 
-if tem_alagamento_trajeto:
-    bairros_afetados = sorted({p["bairro"] for p in pontos_no_trajeto})
+if tem_alerta_trajeto:
+    bairros_afetados = sorted(
+        {p["bairro"] for p in pontos_usuario_trajeto} | {n["bairro"] for n in noticias_no_trajeto}
+    )
     st.error(
         f"⚠️ **Atenção no seu trajeto ({bairro_moradia} ↔ {bairro_trabalho}):** "
-        f"Há ponto(s) de alagamento ativo(s) em **{', '.join(bairros_afetados)}**. "
-        f"Considere sair mais cedo, aguardar ou buscar uma rota alternativa."
+        f"Há registro ou notícia envolvendo **{', '.join(bairros_afetados)}**. "
+        f"Considere sair mais cedo, aguardar ou buscar rota alternativa."
     )
 
-total_ativos = len(st.session_state.ocorrencias)
+total_pinos = len(st.session_state.ocorrencias_usuarios) + len(pinos_noticias)
 
-# Cartões de resumo no topo (3 colunas)
+# Cartões de resumo no topo
 col1, col2, col3 = st.columns(3)
 
 with col1:
+    origem_chuva = "Simulação manual" if usar_simulacao else "Previsão real (Open-Meteo)"
     st.markdown(
         f"""
         <div class="card-resumo">
             <div class="card-titulo">☔ Chuva Prevista Hoje</div>
-            <p class="card-valor" style="color: #1E3A8A;">{chuva_mm} mm</p>
-            <div class="card-sub">Simulação diária para São Paulo</div>
+            <p class="card-valor" style="color: #1E3A8A;">{chuva_ativa_mm} mm</p>
+            <div class="card-sub">{origem_chuva}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -264,45 +353,101 @@ with col3:
     st.markdown(
         f"""
         <div class="card-resumo">
-            <div class="card-titulo">📍 Pontos de Alagamento Ativos</div>
-            <p class="card-valor" style="color: #DC2626;">{total_ativos}</p>
-            <div class="card-sub">Registros exibidos no mapa agora</div>
+            <div class="card-titulo">📍 Marcadores no Mapa</div>
+            <p class="card-valor" style="color: #DC2626;">{total_pinos}</p>
+            <div class="card-sub">{len(st.session_state.ocorrencias_usuarios)} da comunidade • {len(pinos_noticias)} de notícias</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-st.markdown("### 🗺️ Mapa de Alagamentos em São Paulo")
-st.write("Clique em qualquer marcador vermelho no mapa para ver o bairro, o nível da água, o horário e os detalhes do registro.")
+# Mapa moderno e pinos diferenciados por fonte
+st.markdown("### 🗺️ Mapa de Alagamentos e Notícias em São Paulo")
 
-# Centraliza o mapa no bairro de moradia selecionado
+st.markdown(
+    """
+    <div class="legenda-box">
+        <strong>Legenda dos marcadores:</strong> &nbsp;&nbsp;
+        🔴 <strong>Vermelho:</strong> Relato da comunidade <strong>com foto</strong> &nbsp;&nbsp;|&nbsp;&nbsp;
+        🟠 <strong>Laranja:</strong> Relato da comunidade <strong>sem foto</strong> &nbsp;&nbsp;|&nbsp;&nbsp;
+        🟣 <strong>Roxo:</strong> Notícia real de chuva/alagamento em SP
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
 lat_centro, lon_centro = BAIRROS_SP[bairro_moradia]
 mapa = folium.Map(
     location=[lat_centro, lon_centro],
     zoom_start=12,
-    tiles="OpenStreetMap",
+    tiles="CartoDB voyager",
 )
 
-for item in st.session_state.ocorrencias:
+# Pinos de usuários (vermelho com foto, laranja sem foto)
+for item in st.session_state.ocorrencias_usuarios:
+    tem_foto = item.get("foto") is not None
+    cor_pino = "red" if tem_foto else "orange"
+    tipo_label = "Comunidade (com foto)" if tem_foto else "Comunidade (sem foto)"
+    foto_aviso_popup = "<br><span style='color:#059669;'>📷 Foto anexada no registro</span>" if tem_foto else ""
+
     popup_html = f"""
-    <div style="font-family: sans-serif; min-width: 200px;">
-        <strong style="color: #DC2626; font-size: 14px;">📍 {item['bairro']}</strong><br>
-        <span><b>Nível da água:</b> {item['nivel']}</span><br>
+    <div style="font-family: sans-serif; min-width: 210px;">
+        <span style="background:#FEE2E2;color:#991B1B;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:700;">
+            {tipo_label}
+        </span><br>
+        <strong style="color: #0F172A; font-size: 14px;">📍 {item['bairro']}</strong><br>
+        <span><b>Nível:</b> {item['nivel']}</span><br>
         <span><b>Horário:</b> {item['horario']}</span><br>
-        <span><b>Relato:</b> {item['descricao']}</span><br>
+        <span><b>Relato:</b> {item['descricao']}</span>
+        {foto_aviso_popup}<br>
         <span style="color: #475569; font-size: 12px;">Por {item['usuario']}</span>
     </div>
     """
     folium.Marker(
         location=[item["lat"], item["lon"]],
-        popup=folium.Popup(popup_html, max_width=260),
-        tooltip=f"{item['bairro']} — {item['nivel']}",
-        icon=folium.Icon(color="red", icon="info-sign"),
+        popup=folium.Popup(popup_html, max_width=270),
+        tooltip=f"[{tipo_label}] {item['bairro']} — {item['nivel']}",
+        icon=folium.Icon(color=cor_pino, icon="info-sign"),
+    ).add_to(mapa)
+
+# Pinos de notícias reais (roxo)
+for noticia in pinos_noticias:
+    popup_noticia = f"""
+    <div style="font-family: sans-serif; min-width: 220px;">
+        <span style="background:#EDE9FE;color:#5B21B6;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:700;">
+            📰 Notícia Real • {noticia['fonte']}
+        </span><br>
+        <strong style="color: #0F172A; font-size: 13px;">📍 {noticia['bairro']}</strong><br>
+        <span style="font-size: 12px;">{noticia['titulo']}</span><br>
+        <a href="{noticia['link']}" target="_blank" style="font-size: 12px; color: #1E3A8A;">Ler notícia completa</a>
+    </div>
+    """
+    folium.Marker(
+        location=[noticia["lat"], noticia["lon"]],
+        popup=folium.Popup(popup_noticia, max_width=280),
+        tooltip=f"[Notícia] {noticia['bairro']} — {noticia['fonte']}",
+        icon=folium.Icon(color="purple", icon="info-sign"),
     ).add_to(mapa)
 
 st_folium(mapa, use_container_width=True, height=500, returned_objects=[])
 
-# Seção Reportar Novo Alagamento
+# Mural de notícias reais sobre chuvas e alagamentos em SP
+st.divider()
+st.markdown("### 📰 Notícias Reais sobre Chuvas e Alagamentos em São Paulo")
+st.write("Manchetes recentes da imprensa local. Quando um bairro conhecido é citado na manchete, ele também ganha um pino roxo no mapa.")
+
+if not noticias_sp:
+    st.info("Nenhuma manchete recente encontrada agora. Clique em 'Atualizar dados reais agora' na barra lateral.")
+else:
+    for n in noticias_sp[:5]:
+        with st.container(border=True):
+            bairro_tag = f" • 📍 Bairro no mapa: **{n['bairro_detectado']}**" if n["bairro_detectado"] else ""
+            st.markdown(f"**{n['titulo']}**")
+            st.caption(f"Fonte: {n['fonte']}{bairro_tag}")
+            if n["link"]:
+                st.markdown(f"[Abrir notícia]({n['link']})")
+
+# Formulário de registro colaborativo
 st.divider()
 st.markdown("### 🚨 Reportar Novo Alagamento")
 
@@ -327,7 +472,6 @@ with st.form("form_reportar_alagamento", clear_on_submit=True):
         apelido_input = st.text_input(
             "Apelido público (@username) *",
             placeholder="Ex.: @maria_zl ou joao_sp",
-            help="Campo obrigatório. Aparecerá no registro no lugar dos seus dados pessoais.",
         )
         bairro_escolhido = st.selectbox(
             "Bairro do alagamento *",
@@ -342,7 +486,6 @@ with st.form("form_reportar_alagamento", clear_on_submit=True):
         foto_enviada = st.file_uploader(
             "Foto do local (opcional)",
             type=["png", "jpg", "jpeg"],
-            help="Ajude outras pessoas a visualizarem a situação do ponto.",
         )
 
     descricao_curta = st.text_area(
@@ -362,12 +505,16 @@ with st.form("form_reportar_alagamento", clear_on_submit=True):
                 apelido_limpo = f"@{apelido_limpo}"
 
             lat_bairro, lon_bairro = BAIRROS_SP[bairro_escolhido]
-            deslocamento = (len(st.session_state.ocorrencias) % 5) * 0.0025
-            novo_id = max([o["id"] for o in st.session_state.ocorrencias], default=0) + 1
+            deslocamento = (len(st.session_state.ocorrencias_usuarios) % 5) * 0.0025
+            novo_id = max([o["id"] for o in st.session_state.ocorrencias_usuarios], default=0) + 1
             hora_registro = datetime.datetime.now().strftime("%H:%M")
 
             foto_bytes = foto_enviada.getvalue() if foto_enviada is not None else None
-            texto_descricao = descricao_curta.strip() if descricao_curta.strip() else "Ponto de alagamento informado pela comunidade."
+            texto_descricao = (
+                descricao_curta.strip()
+                if descricao_curta.strip()
+                else "Ponto de alagamento informado pela comunidade."
+            )
 
             nova_ocorrencia = {
                 "id": novo_id,
@@ -382,27 +529,28 @@ with st.form("form_reportar_alagamento", clear_on_submit=True):
                 "secou_votos": 0,
             }
 
-            st.session_state.ocorrencias.append(nova_ocorrencia)
+            st.session_state.ocorrencias_usuarios.append(nova_ocorrencia)
             st.session_state.mensagem_sucesso = "Obrigado por ajudar outros trabalhadores!"
             st.rerun()
 
-# Seção Lista de Ocorrências Ativas e Validação Comunitária
+# Lista de ocorrências da comunidade e validação "Já secou"
 st.divider()
-st.markdown("### 📋 Ocorrências Ativas e Validação da Comunidade")
-st.write("A água baixou por aí? Clique em **Já secou** para ajudar a manter o mapa atualizado. Com **3 confirmações**, o registro sai do mapa.")
+st.markdown("### 📋 Ocorrências da Comunidade e Validação")
+st.write("A água baixou por aí? Clique em **Já secou**. Com **3 confirmações**, o registro sai do mapa.")
 
-if not st.session_state.ocorrencias:
-    st.info("Não há pontos de alagamento ativos no momento.")
+if not st.session_state.ocorrencias_usuarios:
+    st.info("Não há relatos de usuários ativos no momento.")
 else:
     ocorrencia_para_remover = None
 
-    for item in st.session_state.ocorrencias:
+    for item in st.session_state.ocorrencias_usuarios:
         with st.container(border=True):
             c_info, c_foto, c_acao = st.columns([4, 2, 2])
 
             with c_info:
                 destaque_trajeto = " • 🧭 **No seu trajeto**" if item["bairro"] in bairros_trajeto else ""
-                st.markdown(f"**📍 {item['bairro']}** — *{item['nivel']}*{destaque_trajeto}")
+                tem_foto_tag = "📷 Com foto" if item.get("foto") is not None else "📝 Sem foto"
+                st.markdown(f"**📍 {item['bairro']}** — *{item['nivel']}* • {tem_foto_tag}{destaque_trajeto}")
                 st.write(item["descricao"])
                 st.caption(
                     f"Registrado às {item['horario']} por **{item['usuario']}** • "
@@ -424,7 +572,7 @@ else:
                     st.rerun()
 
     if ocorrencia_para_remover is not None:
-        st.session_state.ocorrencias = [
-            o for o in st.session_state.ocorrencias if o["id"] != ocorrencia_para_remover
+        st.session_state.ocorrencias_usuarios = [
+            o for o in st.session_state.ocorrencias_usuarios if o["id"] != ocorrencia_para_remover
         ]
         st.rerun()
