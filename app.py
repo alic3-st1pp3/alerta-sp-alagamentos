@@ -4,13 +4,13 @@ import json
 import re
 import urllib.parse
 import feedparser
-import folium
 from google import genai
 from google.genai import types
+import pandas as pd
 from PIL import Image
+import pydeck as pdk
 import requests
 import streamlit as st
-from streamlit_folium import st_folium
 
 # Configuração da página
 st.set_page_config(
@@ -90,7 +90,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Bairros e regiões reais de São Paulo com coordenadas aproximadas
+# Bairros da cidade de São Paulo com coordenadas aproximadas
 BAIRROS_SP = {
     "Itaquera": (-23.5414, -46.4733),
     "Lapa": (-23.5275, -46.7036),
@@ -104,7 +104,70 @@ BAIRROS_SP = {
     "Tatuapé": (-23.5403, -46.5764),
     "Jabaquara": (-23.6464, -46.6408),
     "Butantã": (-23.5719, -46.7081),
+    "Zona Leste": (-23.5450, -46.4950),
+    "Zona Sul": (-23.6500, -46.6900),
+    "Zona Norte": (-23.4950, -46.6300),
+    "Zona Oeste": (-23.5550, -46.7100),
+    "Centro": (-23.5489, -46.6388),
 }
+
+MUNICIPIOS_GRANDE_SP = [
+    "sao paulo",
+    "guarulhos",
+    "osasco",
+    "santo andre",
+    "sao bernardo",
+    "sao caetano",
+    "diadema",
+    "maua",
+    "ribeirao pires",
+    "rio grande da serra",
+    "barueri",
+    "carapicuiba",
+    "cotia",
+    "embu das artes",
+    "itapecerica da serra",
+    "jandira",
+    "santana de parnaiba",
+    "taboao da serra",
+    "aruja",
+    "ferraz de vasconcelos",
+    "itaquaquecetuba",
+    "mogi das cruzes",
+    "poa",
+    "suzano",
+    "caieiras",
+    "cajamar",
+    "franco da rocha",
+    "francisco morato",
+    "mairipora",
+]
+
+TERMOS_INTERIOR_EXCLUIR = [
+    "campinas",
+    "santos",
+    "baixada santista",
+    "sorocaba",
+    "ribeirao preto",
+    "sao jose dos campos",
+    "vale do paraiba",
+    "bauru",
+    "franca",
+    "marilia",
+    "presidente prudente",
+    "sao jose do rio preto",
+    "piracicaba",
+    "jundiai",
+    "araraquara",
+    "botucatu",
+    "itu",
+    "americana",
+    "limeira",
+    "ubatuba",
+    "caraguatatuba",
+    "sao sebastiao",
+    "ilhabela",
+]
 
 NIVEIS_AGUA = [
     "Risco leve / Poças",
@@ -113,11 +176,16 @@ NIVEIS_AGUA = [
 ]
 
 
+def normalizar_texto(texto: str) -> str:
+    mapa_acentos = str.maketrans(
+        "áàãâäéèêëíìîïóòõôöúùûüçÁÀÃÂÄÉÈÊËÍÌÎÏÓÒÕÔÖÚÙÛÜÇ",
+        "aaaaaeeeeiiiiooooouuuucAAAAAEEEEIIIIOOOOOUUUUC",
+    )
+    return texto.translate(mapa_acentos).lower()
+
+
 def validar_imagem_com_ia(foto_bytes: bytes):
-    """
-    Usa o Gemini para verificar se a imagem é segura (sem nudez/pornografia/violência)
-    e se realmente mostra uma via pública, chuva ou alagamento.
-    """
+    """Valida se a imagem é segura e relacionada a rua/alagamento usando o Gemini."""
     api_key = st.secrets.get("GEMINI_API_KEY", None)
     if not api_key:
         return False, "Chave GEMINI_API_KEY não configurada nos Secrets do Streamlit."
@@ -131,9 +199,9 @@ def validar_imagem_com_ia(foto_bytes: bytes):
             "Responda APENAS em JSON válido com duas chaves booleanas e uma string curta em português:\n"
             '{"segura": true/false, "relacionada_alagamento_ou_via": true/false, "motivo": "explicação curta"}\n'
             "Regras:\n"
-            "- segura deve ser false se houver qualquer nudez, pornografia, conteúdo sexual, violência explícita ou ofensivo.\n"
+            "- segura deve ser false se houver nudez, pornografia, conteúdo sexual, violência explícita ou ofensivo.\n"
             "- relacionada_alagamento_ou_via deve ser true APENAS se a foto mostrar rua, avenida, estação, calçada, chuva, poça, enchente ou trânsito afetado por água.\n"
-            "- Se for selfie, meme, tela de computador, animal de estimação ou foto aleatória dentro de casa, relacionada_alagamento_ou_via deve ser false."
+            "- Se for selfie, meme, tela, animal ou foto interna sem relação com via/chuva/alagamento, relacionada_alagamento_ou_via deve ser false."
         )
 
         resposta = client.models.generate_content(
@@ -181,38 +249,47 @@ def buscar_chuva_real_sp():
         return 12.0, None, None, False
 
 
-@st.cache_data(ttl=1800)
-def buscar_noticias_chuva_sp():
-    """Busca notícias recentes sobre alagamento e chuva em São Paulo via Google News RSS."""
-    query = urllib.parse.quote('("alagamento" OR "chuva forte" OR "enchente") "São Paulo"')
+@st.cache_data(ttl=900)
+def buscar_noticias_sp_e_grande_sp():
+    """
+    Busca notícias recentes sobre alagamento e chuva focadas em São Paulo e Grande SP,
+    excluindo manchetes voltadas a cidades do interior paulista.
+    """
+    query = urllib.parse.quote(
+        '(alagamento OR enchente OR "chuva forte") ("São Paulo" OR "Grande SP" OR Guarulhos OR Osasco OR ABC)'
+    )
     url = f"https://news.google.com/rss/search?q={query}&hl=pt-BR&gl=BR&ceid=BR:pt-419"
     noticias = []
+
     try:
         feed = feedparser.parse(url)
-        for entry in feed.entries[:8]:
+        for entry in feed.entries[:15]:
             titulo = entry.get("title", "Notícia sem título")
             link = entry.get("link", "")
             fonte = entry.get("source", {}).get("title", "Imprensa local")
+            texto_norm = normalizar_texto(f"{titulo} {fonte}")
 
-            titulo_sem_acento = (
-                titulo.lower()
-                .replace("á", "a").replace("à", "a").replace("ã", "a").replace("â", "a")
-                .replace("é", "e").replace("ê", "e")
-                .replace("í", "i")
-                .replace("ó", "o").replace("ô", "o").replace("õ", "o")
-                .replace("ú", "u").replace("ç", "c")
+            # Exclui notícias claramente ligadas ao interior/litoral fora da Grande SP
+            if any(re.search(rf"\b{re.escape(termo)}\b", texto_norm) for termo in TERMOS_INTERIOR_EXCLUIR):
+                continue
+
+            # Confirma vínculo com município de SP ou Grande SP
+            tem_grande_sp = any(
+                re.search(rf"\b{re.escape(mun)}\b", texto_norm) for mun in MUNICIPIOS_GRANDE_SP
             )
+            if not tem_grande_sp and "sp" not in texto_norm.split():
+                continue
 
             bairro_detectado = None
             for bairro in BAIRROS_SP:
-                bairro_limpo = (
-                    bairro.lower()
-                    .replace("á", "a").replace("ã", "a")
-                    .replace("é", "e").replace("ú", "u")
-                )
-                if re.search(rf"\b{re.escape(bairro_limpo)}\b", titulo_sem_acento):
+                bairro_norm = normalizar_texto(bairro)
+                if re.search(rf"\b{re.escape(bairro_norm)}\b", texto_norm):
                     bairro_detectado = bairro
                     break
+
+            # Se for notícia da capital/Grande SP sem bairro específico citado, associa ao Centro de SP para plotar no mapa
+            if not bairro_detectado:
+                bairro_detectado = "Centro"
 
             noticias.append(
                 {
@@ -224,7 +301,8 @@ def buscar_noticias_chuva_sp():
             )
     except Exception:
         pass
-    return noticias
+
+    return noticias[:6]
 
 
 # Inicializa ocorrências de usuários no estado da sessão
@@ -261,25 +339,24 @@ if "mensagem_sucesso" not in st.session_state:
     st.session_state.mensagem_sucesso = None
 
 chuva_real_mm, temp_min, temp_max, clima_ok = buscar_chuva_real_sp()
-noticias_sp = buscar_noticias_chuva_sp()
+noticias_sp = buscar_noticias_sp_e_grande_sp()
 
+# Monta pinos de notícias reais (roxo)
 pinos_noticias = []
 for idx, n in enumerate(noticias_sp):
     bairro = n["bairro_detectado"]
-    if bairro and bairro in BAIRROS_SP:
-        lat_b, lon_b = BAIRROS_SP[bairro]
-        desloc = (idx % 4) * 0.0022
-        pinos_noticias.append(
-            {
-                "tipo": "noticia",
-                "bairro": bairro,
-                "lat": lat_b - desloc,
-                "lon": lon_b + desloc,
-                "titulo": n["titulo"],
-                "fonte": n["fonte"],
-                "link": n["link"],
-            }
-        )
+    lat_b, lon_b = BAIRROS_SP.get(bairro, BAIRROS_SP["Centro"])
+    desloc = ((idx % 5) - 2) * 0.0045
+    pinos_noticias.append(
+        {
+            "tipo_label": "Notícia Real (SP/Grande SP)",
+            "bairro": bairro,
+            "lat": lat_b + desloc,
+            "lon": lon_b - desloc,
+            "resumo": f"{n['fonte']}: {n['titulo']}",
+            "cor": [139, 92, 246, 230],  # Roxo
+        }
+    )
 
 # Cabeçalho principal
 st.markdown(
@@ -399,85 +476,106 @@ with col3:
         unsafe_allow_html=True,
     )
 
-# Mapa
-st.markdown("### 🗺️ Mapa de Alagamentos e Notícias em São Paulo")
+# Mapa nativo PyDeck focado na cidade de São Paulo
+st.markdown("### 🗺️ Mapa de Alagamentos e Notícias — Cidade de São Paulo")
 
 st.markdown(
     """
     <div class="legenda-box">
         <strong>Legenda dos marcadores:</strong> &nbsp;&nbsp;
-        🔴 <strong>Vermelho:</strong> Relato da comunidade <strong>com foto validada</strong> &nbsp;&nbsp;|&nbsp;&nbsp;
-        🟠 <strong>Laranja:</strong> Relato da comunidade <strong>sem foto</strong> &nbsp;&nbsp;|&nbsp;&nbsp;
-        🟣 <strong>Roxo:</strong> Notícia real de chuva/alagamento em SP
+        🔴 <strong>Vermelho:</strong> Comunidade <strong>com foto</strong> &nbsp;&nbsp;|&nbsp;&nbsp;
+        🟠 <strong>Laranja:</strong> Comunidade <strong>sem foto</strong> &nbsp;&nbsp;|&nbsp;&nbsp;
+        🟣 <strong>Roxo:</strong> Notícia real de chuva/alagamento (SP / Grande SP)
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-lat_centro, lon_centro = BAIRROS_SP[bairro_moradia]
-mapa = folium.Map(
-    location=[lat_centro, lon_centro],
-    zoom_start=12,
-    tiles="OpenStreetMap",
-)
+dados_mapa = []
 
 for item in st.session_state.ocorrencias_usuarios:
     tem_foto = item.get("foto") is not None
-    cor_pino = "red" if tem_foto else "orange"
-    tipo_label = "Comunidade (com foto)" if tem_foto else "Comunidade (sem foto)"
-    foto_aviso_popup = "<br><span style='color:#059669;'>📷 Foto verificada por IA</span>" if tem_foto else ""
+    dados_mapa.append(
+        {
+            "lat": item["lat"],
+            "lon": item["lon"],
+            "bairro": item["bairro"],
+            "tipo_label": "Comunidade (com foto)" if tem_foto else "Comunidade (sem foto)",
+            "resumo": f"{item['nivel']} — {item['descricao']} ({item['usuario']})",
+            "cor": [220, 38, 38, 235] if tem_foto else [249, 115, 22, 235],
+        }
+    )
 
-    popup_html = f"""
-    <div style="font-family: sans-serif; min-width: 210px;">
-        <span style="background:#FEE2E2;color:#991B1B;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:700;">
-            {tipo_label}
-        </span><br>
-        <strong style="color: #0F172A; font-size: 14px;">📍 {item['bairro']}</strong><br>
-        <span><b>Nível:</b> {item['nivel']}</span><br>
-        <span><b>Horário:</b> {item['horario']}</span><br>
-        <span><b>Relato:</b> {item['descricao']}</span>
-        {foto_aviso_popup}<br>
-        <span style="color: #475569; font-size: 12px;">Por {item['usuario']}</span>
-    </div>
-    """
-    folium.Marker(
-        location=[item["lat"], item["lon"]],
-        popup=folium.Popup(popup_html, max_width=270),
-        tooltip=f"[{tipo_label}] {item['bairro']} — {item['nivel']}",
-        icon=folium.Icon(color=cor_pino, icon="info-sign"),
-    ).add_to(mapa)
+for pino in pinos_noticias:
+    dados_mapa.append(
+        {
+            "lat": pino["lat"],
+            "lon": pino["lon"],
+            "bairro": pino["bairro"],
+            "tipo_label": pino["tipo_label"],
+            "resumo": pino["resumo"],
+            "cor": pino["cor"],
+        }
+    )
 
-for noticia in pinos_noticias:
-    popup_noticia = f"""
-    <div style="font-family: sans-serif; min-width: 220px;">
-        <span style="background:#EDE9FE;color:#5B21B6;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:700;">
-            📰 Notícia Real • {noticia['fonte']}
-        </span><br>
-        <strong style="color: #0F172A; font-size: 13px;">📍 {noticia['bairro']}</strong><br>
-        <span style="font-size: 12px;">{noticia['titulo']}</span><br>
-        <a href="{noticia['link']}" target="_blank" style="font-size: 12px; color: #1E3A8A;">Ler notícia completa</a>
-    </div>
-    """
-    folium.Marker(
-        location=[noticia["lat"], noticia["lon"]],
-        popup=folium.Popup(popup_noticia, max_width=280),
-        tooltip=f"[Notícia] {noticia['bairro']} — {noticia['fonte']}",
-        icon=folium.Icon(color="purple", icon="info-sign"),
-    ).add_to(mapa)
+df_mapa = pd.DataFrame(dados_mapa)
 
-st_folium(mapa, width=1100, height=500, returned_objects=[])
+# Garante que o foco inicial fique dentro da cidade de São Paulo
+lat_foco, lon_foco = BAIRROS_SP.get(bairro_moradia, (-23.5505, -46.6339))
 
-# Mural de notícias reais
+layer = pdk.Layer(
+    "ScatterplotLayer",
+    data=df_mapa,
+    get_position="[lon, lat]",
+    get_color="cor",
+    get_radius=420,
+    pickable=True,
+    auto_highlight=True,
+)
+
+view_state = pdk.ViewState(
+    latitude=lat_foco,
+    longitude=lon_foco,
+    zoom=11.3,
+    min_zoom=10.2,
+    max_zoom=15.0,
+    pitch=0,
+)
+
+tooltip = {
+    "html": "<b>{tipo_label}</b><br/><b>Bairro:</b> {bairro}<br/>{resumo}",
+    "style": {
+        "backgroundColor": "#0F172A",
+        "color": "#FFFFFF",
+        "fontSize": "13px",
+        "borderRadius": "8px",
+        "padding": "10px",
+    },
+}
+
+st.pydeck_chart(
+    pdk.Deck(
+        map_style="light",
+        initial_view_state=view_state,
+        layers=[layer],
+        tooltip=tooltip,
+    ),
+    use_container_width=True,
+    height=480,
+)
+
+# Mural de notícias reais focadas em SP e Grande SP
 st.divider()
-st.markdown("### 📰 Notícias Reais sobre Chuvas e Alagamentos em São Paulo")
+st.markdown("### 📰 Notícias Reais — São Paulo e Grande SP")
+st.write("Manchetes recentes da imprensa local focadas na capital e região metropolitana (sem cidades do interior). Passe o mouse nos pontos roxos no mapa para ver os detalhes.")
+
 if not noticias_sp:
-    st.info("Nenhuma manchete recente encontrada agora. Clique em 'Atualizar dados reais agora' na barra lateral.")
+    st.info("Nenhuma manchete recente encontrada agora para SP/Grande SP. Clique em 'Atualizar dados reais agora' na barra lateral.")
 else:
-    for n in noticias_sp[:5]:
+    for n in noticias_sp:
         with st.container(border=True):
-            bairro_tag = f" • 📍 Bairro no mapa: **{n['bairro_detectado']}**" if n["bairro_detectado"] else ""
             st.markdown(f"**{n['titulo']}**")
-            st.caption(f"Fonte: {n['fonte']}{bairro_tag}")
+            st.caption(f"Fonte: {n['fonte']} • 📍 Referência no mapa: **{n['bairro_detectado']}**")
             if n["link"]:
                 st.markdown(f"[Abrir notícia]({n['link']})")
 
