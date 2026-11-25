@@ -438,4 +438,406 @@ if "ocorrencias_usuarios" not in st.session_state:
     ]
 
 if "mensagem_sucesso" not in st.session_state:
-    st.session_state.mensagem_sucesso
+    st.session_state.mensagem_sucesso = None
+
+chuva_real_mm, temp_min, temp_max, clima_ok = buscar_chuva_real_sp()
+noticias_sp = buscar_noticias_sp_e_grande_sp()
+
+# Monta pinos de notícias reais (roxo)
+pinos_noticias = []
+for idx, n in enumerate(noticias_sp):
+    distrito = n["distrito_detectado"]
+    lat_b, lon_b = DISTRITOS_SP.get(distrito, DISTRITOS_SP["Sé"])
+    desloc = ((idx % 5) - 2) * 0.0045
+    pinos_noticias.append(
+        {
+            "tipo_label": "Notícia Real (SP/Grande SP)",
+            "distrito": distrito,
+            "lat": lat_b + desloc,
+            "lon": lon_b - desloc,
+            "resumo": f"{n['fonte']}: {n['titulo']}",
+            "cor": [139, 92, 246, 230],
+        }
+    )
+
+# Cabeçalho principal
+st.markdown(
+    """
+    <div class="header-box">
+        <h1>🌧️ Alerta SP — Mobilidade Segura em Dias de Chuva</h1>
+        <p>Dados reais de chuva em São Paulo, notícias locais, relatos validados por IA e mapa de pontos críticos.</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# Barra lateral com os 96 distritos oficiais de SP
+with st.sidebar:
+    st.header("🧭 Seu Trajeto e Chuva")
+    st.markdown(
+        """
+        <div class="escopo-box">
+            🏙️ <strong>Escopo do mapa e distritos:</strong> Esta função de distritos e alertas de trajeto está disponível <strong>apenas para o município de São Paulo (capital)</strong>, e não para os demais municípios da Grande SP.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    lista_distritos = sorted(DISTRITOS_SP.keys())
+    idx_moradia = lista_distritos.index("Itaquera") if "Itaquera" in lista_distritos else 0
+    idx_trabalho = lista_distritos.index("Sé") if "Sé" in lista_distritos else 0
+
+    distrito_moradia = st.selectbox("Distrito onde você mora (SP Capital)", options=lista_distritos, index=idx_moradia)
+    distrito_trabalho = st.selectbox("Distrito onde você trabalha (SP Capital)", options=lista_distritos, index=idx_trabalho)
+
+    st.divider()
+    st.subheader("🌦️ Clima Real (São Paulo)")
+    if clima_ok:
+        st.success(f"Previsão real hoje: **{chuva_real_mm} mm**")
+        if temp_min is not None and temp_max is not None:
+            st.caption(f"Temperatura prevista: {temp_min}°C a {temp_max}°C")
+    else:
+        st.warning("Sem conexão com a API meteorológica no momento; usando estimativa.")
+
+    usar_simulacao = st.checkbox("Simular outro volume de chuva manualmente", value=False)
+    if usar_simulacao:
+        chuva_ativa_mm = float(
+            st.slider("Chuva simulada (mm)", min_value=0, max_value=80, value=int(chuva_real_mm), step=1)
+        )
+    else:
+        chuva_ativa_mm = chuva_real_mm
+
+    if st.button("🔄 Atualizar dados reais agora", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+
+# Verifica pontos ativos nos distritos selecionados
+distritos_trajeto = {distrito_moradia, distrito_trabalho}
+pontos_usuario_trajeto = [
+    item for item in st.session_state.ocorrencias_usuarios if item["distrito"] in distritos_trajeto
+]
+noticias_no_trajeto = [
+    item for item in pinos_noticias if item["distrito"] in distritos_trajeto
+]
+tem_alerta_trajeto = len(pontos_usuario_trajeto) > 0 or len(noticias_no_trajeto) > 0
+
+if tem_alerta_trajeto:
+    risco_texto = "Risco Alto"
+    risco_cor = "#DC2626"
+    risco_aviso = "Ponto ou notícia de alagamento no seu trajeto!"
+elif chuva_ativa_mm < 10:
+    risco_texto = "Risco Baixo"
+    risco_cor = "#059669"
+    risco_aviso = "Trajeto livre de alertas críticos pela chuva."
+elif chuva_ativa_mm <= 30:
+    risco_texto = "Risco Moderado"
+    risco_cor = "#D97706"
+    risco_aviso = "Atenção: chance de poças e trânsito lento."
+else:
+    risco_texto = "Risco Alto"
+    risco_cor = "#DC2626"
+    risco_aviso = "Alerta: chuva forte com alto risco de alagamento."
+
+if tem_alerta_trajeto:
+    distritos_afetados = sorted(
+        {p["distrito"] for p in pontos_usuario_trajeto} | {n["distrito"] for n in noticias_no_trajeto}
+    )
+    st.error(
+        f"⚠️ **Atenção no seu trajeto ({distrito_moradia} ↔ {distrito_trabalho}):** "
+        f"Há registro ou notícia envolvendo **{', '.join(distritos_afetados)}**. "
+        f"Considere sair mais cedo, aguardar ou buscar rota alternativa."
+    )
+
+total_pinos = len(st.session_state.ocorrencias_usuarios) + len(pinos_noticias)
+
+# Cartões de resumo no topo
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    origem_chuva = "Simulação manual" if usar_simulacao else "Previsão real (Open-Meteo)"
+    st.markdown(
+        f"""
+        <div class="card-resumo">
+            <div class="card-titulo">☔ Chuva Prevista Hoje</div>
+            <p class="card-valor" style="color: #1E3A8A;">{chuva_ativa_mm} mm</p>
+            <div class="card-sub">{origem_chuva}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+with col2:
+    st.markdown(
+        f"""
+        <div class="card-resumo">
+            <div class="card-titulo">🚦 Nível de Risco no Trajeto</div>
+            <p class="card-valor" style="color: {risco_cor};">{risco_texto}</p>
+            <div class="card-sub">{distrito_moradia} ↔ {distrito_trabalho} • {risco_aviso}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+with col3:
+    st.markdown(
+        f"""
+        <div class="card-resumo">
+            <div class="card-titulo">📍 Marcadores no Mapa</div>
+            <p class="card-valor" style="color: #DC2626;">{total_pinos}</p>
+            <div class="card-sub">{len(st.session_state.ocorrencias_usuarios)} da comunidade • {len(pinos_noticias)} de notícias</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+# 1. MAPA (Focado no município de SP)
+st.markdown("### 🗺️ Mapa de Alagamentos e Notícias — Município de São Paulo")
+st.caption("Filtro de distritos e alertas de trajeto válidos exclusivamente para a cidade de São Paulo (capital).")
+
+st.markdown(
+    """
+    <div class="legenda-box">
+        <strong>Legenda dos marcadores:</strong> &nbsp;&nbsp;
+        🔴 <strong>Vermelho:</strong> Comunidade <strong>com foto</strong> &nbsp;&nbsp;|&nbsp;&nbsp;
+        🟠 <strong>Laranja:</strong> Comunidade <strong>sem foto</strong> &nbsp;&nbsp;|&nbsp;&nbsp;
+        🟣 <strong>Roxo:</strong> Notícia real de chuva/alagamento (SP / Grande SP)
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+dados_mapa = []
+
+for item in st.session_state.ocorrencias_usuarios:
+    tem_foto = item.get("foto") is not None
+    dados_mapa.append(
+        {
+            "lat": item["lat"],
+            "lon": item["lon"],
+            "distrito": item["distrito"],
+            "tipo_label": "Comunidade (com foto)" if tem_foto else "Comunidade (sem foto)",
+            "resumo": f"{item['nivel']} — {item['descricao']} ({item['usuario']})",
+            "cor": [220, 38, 38, 235] if tem_foto else [249, 115, 22, 235],
+        }
+    )
+
+for pino in pinos_noticias:
+    dados_mapa.append(
+        {
+            "lat": pino["lat"],
+            "lon": pino["lon"],
+            "distrito": pino["distrito"],
+            "tipo_label": pino["tipo_label"],
+            "resumo": pino["resumo"],
+            "cor": pino["cor"],
+        }
+    )
+
+df_mapa = pd.DataFrame(dados_mapa)
+lat_foco, lon_foco = DISTRITOS_SP.get(distrito_moradia, (-23.5505, -46.6339))
+
+layer = pdk.Layer(
+    "ScatterplotLayer",
+    data=df_mapa,
+    get_position="[lon, lat]",
+    get_color="cor",
+    get_radius=420,
+    pickable=True,
+    auto_highlight=True,
+)
+
+view_state = pdk.ViewState(
+    latitude=lat_foco,
+    longitude=lon_foco,
+    zoom=11.3,
+    min_zoom=10.3,
+    max_zoom=15.0,
+    pitch=0,
+)
+
+tooltip = {
+    "html": "<b>{tipo_label}</b><br/><b>Distrito (SP):</b> {distrito}<br/>{resumo}",
+    "style": {
+        "backgroundColor": "#0F172A",
+        "color": "#FFFFFF",
+        "fontSize": "13px",
+        "borderRadius": "8px",
+        "padding": "10px",
+    },
+}
+
+st.pydeck_chart(
+    pdk.Deck(
+        map_style="light",
+        initial_view_state=view_state,
+        layers=[layer],
+        tooltip=tooltip,
+    ),
+    use_container_width=True,
+    height=480,
+)
+
+# 2. REPORT DE USUÁRIOS LOGO ABAIXO DO MAPA
+st.divider()
+st.markdown("### 🚨 Reportar Novo Alagamento (Município de São Paulo)")
+
+st.markdown(
+    """
+    <div class="escopo-box">
+        🏙️ <strong>Atenção:</strong> O registro por distrito neste formulário está disponível <strong>apenas para o município de São Paulo (capital)</strong> — não abrange os demais municípios da Grande SP.
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+if st.session_state.mensagem_sucesso:
+    st.success(st.session_state.mensagem_sucesso)
+    st.session_state.mensagem_sucesso = None
+
+st.markdown(
+    """
+    <div class="privacidade-box">
+        🔒 <strong>Privacidade e Segurança:</strong> Usamos apenas o seu apelido público (<code>@username</code>).
+        Não pedimos CPF nem endereço exato. Fotos enviadas passam por <strong>verificação automática por IA</strong> para garantir que sejam registros reais de ruas ou alagamentos.
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+with st.form("form_reportar_alagamento", clear_on_submit=True):
+    col_form1, col_form2 = st.columns(2)
+
+    with col_form1:
+        apelido_input = st.text_input(
+            "Apelido público (@username) *",
+            placeholder="Ex.: @maria_zl ou joao_sp",
+        )
+        distrito_escolhido = st.selectbox(
+            "Distrito do alagamento (apenas SP Capital) *",
+            options=lista_distritos,
+        )
+
+    with col_form2:
+        nivel_escolhido = st.selectbox(
+            "Nível da água *",
+            options=NIVEIS_AGUA,
+        )
+        foto_enviada = st.file_uploader(
+            "Foto do local (opcional — verificada automaticamente por IA)",
+            type=["png", "jpg", "jpeg"],
+        )
+
+    descricao_curta = st.text_area(
+        "Descrição curta (opcional — até 140 caracteres)",
+        max_chars=140,
+        placeholder="Ex.: Perto do ponto de ônibus, água subindo rápido na via.",
+    )
+
+    enviado = st.form_submit_button("Enviar Alerta", type="primary", use_container_width=True)
+
+    if enviado:
+        apelido_limpo = apelido_input.strip()
+        if not apelido_limpo:
+            st.error("Por favor, preencha o seu apelido público (@username) antes de enviar o alerta.")
+        else:
+            foto_bytes = None
+            imagem_aprovada = True
+
+            if foto_enviada is not None:
+                foto_bytes = foto_enviada.getvalue()
+                with st.spinner("🤖 Analisando a imagem com IA para garantir segurança e relevância..."):
+                    imagem_aprovada, mensagem_ia = validar_imagem_com_ia(foto_bytes)
+
+                if not imagem_aprovada:
+                    st.error(f"🚫 {mensagem_ia}")
+
+            if imagem_aprovada:
+                if not apelido_limpo.startswith("@"):
+                    apelido_limpo = f"@{apelido_limpo}"
+
+                lat_distrito, lon_distrito = DISTRITOS_SP[distrito_escolhido]
+                deslocamento = (len(st.session_state.ocorrencias_usuarios) % 5) * 0.0025
+                novo_id = max([o["id"] for o in st.session_state.ocorrencias_usuarios], default=0) + 1
+                hora_registro = datetime.datetime.now().strftime("%H:%M")
+
+                texto_descricao = (
+                    descricao_curta.strip()
+                    if descricao_curta.strip()
+                    else "Ponto de alagamento informado pela comunidade."
+                )
+
+                nova_ocorrencia = {
+                    "id": novo_id,
+                    "usuario": apelido_limpo,
+                    "distrito": distrito_escolhido,
+                    "lat": lat_distrito + deslocamento,
+                    "lon": lon_distrito - deslocamento,
+                    "nivel": nivel_escolhido,
+                    "horario": hora_registro,
+                    "descricao": texto_descricao,
+                    "foto": foto_bytes,
+                    "secou_votos": 0,
+                }
+
+                st.session_state.ocorrencias_usuarios.append(nova_ocorrencia)
+                st.session_state.mensagem_sucesso = "Obrigado por ajudar outros trabalhadores!"
+                st.rerun()
+
+# 3. NOTÍCIAS REAIS APÓS O FORMULÁRIO DE REPORT
+st.divider()
+st.markdown("### 📰 Notícias Reais — São Paulo e Grande SP")
+st.write("Manchetes recentes da imprensa local focadas na capital e região metropolitana (sem cidades do interior). Passe o mouse nos pontos roxos no mapa para ver os detalhes.")
+
+if not noticias_sp:
+    st.info("Nenhuma manchete recente encontrada agora para SP/Grande SP. Clique em 'Atualizar dados reais agora' na barra lateral.")
+else:
+    for n in noticias_sp:
+        with st.container(border=True):
+            st.markdown(f"**{n['titulo']}**")
+            st.caption(f"Fonte: {n['fonte']} • 📍 Distrito de referência no mapa: **{n['distrito_detectado']}**")
+            if n["link"]:
+                st.markdown(f"[Abrir notícia]({n['link']})")
+
+# 4. LISTA DE OCORRÊNCIAS DA COMUNIDADE E VALIDAÇÃO
+st.divider()
+st.markdown("### 📋 Ocorrências da Comunidade e Validação")
+st.write("A água baixou por aí? Clique em **Já secou**. Com **3 confirmações**, o registro sai do mapa.")
+
+if not st.session_state.ocorrencias_usuarios:
+    st.info("Não há relatos de usuários ativos no momento.")
+else:
+    ocorrencia_para_remover = None
+
+    for item in st.session_state.ocorrencias_usuarios:
+        with st.container(border=True):
+            c_info, c_foto, c_acao = st.columns([4, 2, 2])
+
+            with c_info:
+                destaque_trajeto = " • 🧭 **No seu trajeto**" if item["distrito"] in distritos_trajeto else ""
+                tem_foto_tag = "📷 Com foto verificada" if item.get("foto") is not None else "📝 Sem foto"
+                st.markdown(f"**📍 {item['distrito']} (SP)** — *{item['nivel']}* • {tem_foto_tag}{destaque_trajeto}")
+                st.write(item["descricao"])
+                st.caption(
+                    f"Registrado às {item['horario']} por **{item['usuario']}** • "
+                    f"Confirmações de que secou: **{item['secou_votos']}/3**"
+                )
+
+            with c_foto:
+                if item.get("foto") is not None:
+                    st.image(item["foto"], caption="Foto validada", use_container_width=True)
+                else:
+                    st.caption("Sem foto anexada")
+
+            with c_acao:
+                st.write("")
+                if st.button("✅ Já secou", key=f"secou_{item['id']}", use_container_width=True):
+                    item["secou_votos"] += 1
+                    if item["secou_votos"] >= 3:
+                        ocorrencia_para_remover = item["id"]
+                    st.rerun()
+
+    if ocorrencia_para_remover is not None:
+        st.session_state.ocorrencias_usuarios = [
+            o for o in st.session_state.ocorrencias_usuarios if o["id"] != ocorrencia_para_remover
+        ]
+        st.rerun()
