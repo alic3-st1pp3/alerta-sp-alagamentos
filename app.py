@@ -367,6 +367,17 @@ def validar_imagem_com_ia(foto_bytes: bytes):
         return False, f"Não foi possível validar a imagem agora ({e}). Tente novamente."
 
 
+@st.dialog("Alerta enviado com sucesso!")
+def mostrar_popup_agradecimento(teve_foto_validada: bool):
+    """Exibe popup de agradecimento após o envio do relato."""
+    st.markdown("### Obrigado por ajudar outros trabalhadores!")
+    st.write("Seu registro já foi adicionado ao painel para ajudar outras pessoas no trajeto em São Paulo.")
+    if teve_foto_validada:
+        st.success("📷 Sua foto foi validada pela IA e adicionada ao registro.")
+    if st.button("Entendido", type="primary", use_container_width=True):
+        st.rerun()
+
+
 @st.cache_data(ttl=1800)
 def buscar_chuva_real_sp():
     """Busca previsão real de precipitação (mm) e temperatura para São Paulo via Open-Meteo."""
@@ -471,8 +482,17 @@ if "ocorrencias_usuarios" not in st.session_state:
         },
     ]
 
-if "mensagem_sucesso" not in st.session_state:
-    st.session_state.mensagem_sucesso = None
+if "abrir_popup_obrigado" not in st.session_state:
+    st.session_state.abrir_popup_obrigado = False
+
+if "ultimo_envio_teve_foto" not in st.session_state:
+    st.session_state.ultimo_envio_teve_foto = False
+
+if st.session_state.abrir_popup_obrigado:
+    teve_foto_flag = st.session_state.ultimo_envio_teve_foto
+    st.session_state.abrir_popup_obrigado = False
+    st.session_state.ultimo_envio_teve_foto = False
+    mostrar_popup_agradecimento(teve_foto_flag)
 
 chuva_real_mm, temp_min, temp_max, clima_ok = buscar_chuva_real_sp()
 noticias_sp = buscar_noticias_sp_e_grande_sp()
@@ -724,10 +744,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-if st.session_state.mensagem_sucesso:
-    st.success(st.session_state.mensagem_sucesso)
-    st.session_state.mensagem_sucesso = None
-
 st.markdown(
     """
     <div class="privacidade-box">
@@ -814,7 +830,8 @@ with st.form("form_reportar_alagamento", clear_on_submit=True):
                 }
 
                 st.session_state.ocorrencias_usuarios.append(nova_ocorrencia)
-                st.session_state.mensagem_sucesso = "Obrigado por ajudar outros trabalhadores!"
+                st.session_state.ultimo_envio_teve_foto = foto_bytes is not None
+                st.session_state.abrir_popup_obrigado = True
                 st.rerun()
 
 # 3. NOTÍCIAS REAIS APÓS O FORMULÁRIO DE REPORT
