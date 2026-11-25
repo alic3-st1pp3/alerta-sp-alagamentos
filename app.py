@@ -68,6 +68,13 @@ st.markdown(
             font-size: 15px;
             margin-bottom: 16px;
         }
+        .ocorrencia-card {
+            background-color: #FFFFFF;
+            border: 1px solid #E2E8F0;
+            border-radius: 12px;
+            padding: 16px 18px;
+            margin-bottom: 12px;
+        }
     </style>
     """,
     unsafe_allow_html=True,
@@ -191,8 +198,19 @@ with st.sidebar:
         help="Arraste para simular o volume de chuva esperado para o dia.",
     )
 
-# Cálculo do nível de risco com base nos milímetros de chuva
-if chuva_mm < 10:
+# Verifica se há pontos ativos nos bairros selecionados no trajeto
+bairros_trajeto = {bairro_moradia, bairro_trabalho}
+pontos_no_trajeto = [
+    item for item in st.session_state.ocorrencias if item["bairro"] in bairros_trajeto
+]
+tem_alagamento_trajeto = len(pontos_no_trajeto) > 0
+
+# Cálculo do nível de risco considerando chuva e pontos ativos no trajeto
+if tem_alagamento_trajeto:
+    risco_texto = "Risco Alto"
+    risco_cor = "#DC2626"
+    risco_aviso = "Alagamento detectado no seu trajeto!"
+elif chuva_mm < 10:
     risco_texto = "Risco Baixo"
     risco_cor = "#059669"
     risco_aviso = "Trajeto livre de alertas críticos pela chuva."
@@ -204,6 +222,14 @@ else:
     risco_texto = "Risco Alto"
     risco_cor = "#DC2626"
     risco_aviso = "Alerta: chuva forte com alto risco de alagamento."
+
+if tem_alagamento_trajeto:
+    bairros_afetados = sorted({p["bairro"] for p in pontos_no_trajeto})
+    st.error(
+        f"⚠️ **Atenção no seu trajeto ({bairro_moradia} ↔ {bairro_trabalho}):** "
+        f"Há ponto(s) de alagamento ativo(s) em **{', '.join(bairros_afetados)}**. "
+        f"Considere sair mais cedo, aguardar ou buscar uma rota alternativa."
+    )
 
 total_ativos = len(st.session_state.ocorrencias)
 
@@ -249,7 +275,7 @@ with col3:
 st.markdown("### 🗺️ Mapa de Alagamentos em São Paulo")
 st.write("Clique em qualquer marcador vermelho no mapa para ver o bairro, o nível da água, o horário e os detalhes do registro.")
 
-# Centraliza o mapa no bairro de moradia selecionado (sem depender de tiles externos pagos)
+# Centraliza o mapa no bairro de moradia selecionado
 lat_centro, lon_centro = BAIRROS_SP[bairro_moradia]
 mapa = folium.Map(
     location=[lat_centro, lon_centro],
@@ -359,3 +385,46 @@ with st.form("form_reportar_alagamento", clear_on_submit=True):
             st.session_state.ocorrencias.append(nova_ocorrencia)
             st.session_state.mensagem_sucesso = "Obrigado por ajudar outros trabalhadores!"
             st.rerun()
+
+# Seção Lista de Ocorrências Ativas e Validação Comunitária
+st.divider()
+st.markdown("### 📋 Ocorrências Ativas e Validação da Comunidade")
+st.write("A água baixou por aí? Clique em **Já secou** para ajudar a manter o mapa atualizado. Com **3 confirmações**, o registro sai do mapa.")
+
+if not st.session_state.ocorrencias:
+    st.info("Não há pontos de alagamento ativos no momento.")
+else:
+    ocorrencia_para_remover = None
+
+    for item in st.session_state.ocorrencias:
+        with st.container(border=True):
+            c_info, c_foto, c_acao = st.columns([4, 2, 2])
+
+            with c_info:
+                destaque_trajeto = " • 🧭 **No seu trajeto**" if item["bairro"] in bairros_trajeto else ""
+                st.markdown(f"**📍 {item['bairro']}** — *{item['nivel']}*{destaque_trajeto}")
+                st.write(item["descricao"])
+                st.caption(
+                    f"Registrado às {item['horario']} por **{item['usuario']}** • "
+                    f"Confirmações de que secou: **{item['secou_votos']}/3**"
+                )
+
+            with c_foto:
+                if item.get("foto") is not None:
+                    st.image(item["foto"], caption="Foto do registro", use_container_width=True)
+                else:
+                    st.caption("Sem foto anexada")
+
+            with c_acao:
+                st.write("")
+                if st.button("✅ Já secou", key=f"secou_{item['id']}", use_container_width=True):
+                    item["secou_votos"] += 1
+                    if item["secou_votos"] >= 3:
+                        ocorrencia_para_remover = item["id"]
+                    st.rerun()
+
+    if ocorrencia_para_remover is not None:
+        st.session_state.ocorrencias = [
+            o for o in st.session_state.ocorrencias if o["id"] != ocorrencia_para_remover
+        ]
+        st.rerun()
