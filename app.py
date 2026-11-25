@@ -1,8 +1,13 @@
 import datetime
+import io
+import json
 import re
 import urllib.parse
 import feedparser
 import folium
+from google import genai
+from google.genai import types
+from PIL import Image
 import requests
 import streamlit as st
 from streamlit_folium import st_folium
@@ -108,6 +113,53 @@ NIVEIS_AGUA = [
 ]
 
 
+def validar_imagem_com_ia(foto_bytes: bytes):
+    """
+    Usa o Gemini para verificar se a imagem é segura (sem nudez/pornografia/violência)
+    e se realmente mostra uma via pública, chuva ou alagamento.
+    """
+    api_key = st.secrets.get("GEMINI_API_KEY", None)
+    if not api_key:
+        return False, "Chave GEMINI_API_KEY não configurada nos Secrets do Streamlit."
+
+    try:
+        client = genai.Client(api_key=api_key)
+        imagem = Image.open(io.BytesIO(foto_bytes))
+
+        prompt = (
+            "Analise esta imagem enviada para um sistema público de alerta de alagamentos em São Paulo. "
+            "Responda APENAS em JSON válido com duas chaves booleanas e uma string curta em português:\n"
+            '{"segura": true/false, "relacionada_alagamento_ou_via": true/false, "motivo": "explicação curta"}\n'
+            "Regras:\n"
+            "- segura deve ser false se houver qualquer nudez, pornografia, conteúdo sexual, violência explícita ou ofensivo.\n"
+            "- relacionada_alagamento_ou_via deve ser true APENAS se a foto mostrar rua, avenida, estação, calçada, chuva, poça, enchente ou trânsito afetado por água.\n"
+            "- Se for selfie, meme, tela de computador, animal de estimação ou foto aleatória dentro de casa, relacionada_alagamento_ou_via deve ser false."
+        )
+
+        resposta = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[imagem, prompt],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                temperature=0.1,
+            ),
+        )
+
+        resultado = json.loads(resposta.text)
+        segura = bool(resultado.get("segura", False))
+        relacionada = bool(resultado.get("relacionada_alagamento_ou_via", False))
+        motivo = resultado.get("motivo", "Imagem fora dos critérios do sistema.")
+
+        if not segura:
+            return False, "Imagem bloqueada pelo filtro de segurança (conteúdo impróprio detectado)."
+        if not relacionada:
+            return False, f"Imagem recusada: {motivo}. Envie apenas fotos reais da rua ou do alagamento."
+
+        return True, "Imagem validada com sucesso."
+    except Exception as e:
+        return False, f"Não foi possível validar a imagem agora ({e}). Tente novamente."
+
+
 @st.cache_data(ttl=1800)
 def buscar_chuva_real_sp():
     """Busca previsão real de precipitação (mm) e temperatura para São Paulo via Open-Meteo."""
@@ -140,33 +192,23 @@ def buscar_noticias_chuva_sp():
         for entry in feed.entries[:8]:
             titulo = entry.get("title", "Notícia sem título")
             link = entry.get("link", "")
-            publicado = entry.get("published", "")
             fonte = entry.get("source", {}).get("title", "Imprensa local")
 
             titulo_sem_acento = (
                 titulo.lower()
-                .replace("á", "a")
-                .replace("à", "a")
-                .replace("ã", "a")
-                .replace("â", "a")
-                .replace("é", "e")
-                .replace("ê", "e")
+                .replace("á", "a").replace("à", "a").replace("ã", "a").replace("â", "a")
+                .replace("é", "e").replace("ê", "e")
                 .replace("í", "i")
-                .replace("ó", "o")
-                .replace("ô", "o")
-                .replace("õ", "o")
-                .replace("ú", "u")
-                .replace("ç", "c")
+                .replace("ó", "o").replace("ô", "o").replace("õ", "o")
+                .replace("ú", "u").replace("ç", "c")
             )
 
             bairro_detectado = None
             for bairro in BAIRROS_SP:
                 bairro_limpo = (
                     bairro.lower()
-                    .replace("á", "a")
-                    .replace("ã", "a")
-                    .replace("é", "e")
-                    .replace("ú", "u")
+                    .replace("á", "a").replace("ã", "a")
+                    .replace("é", "e").replace("ú", "u")
                 )
                 if re.search(rf"\b{re.escape(bairro_limpo)}\b", titulo_sem_acento):
                     bairro_detectado = bairro
@@ -176,7 +218,6 @@ def buscar_noticias_chuva_sp():
                 {
                     "titulo": titulo,
                     "link": link,
-                    "publicado": publicado,
                     "fonte": fonte,
                     "bairro_detectado": bairro_detectado,
                 }
@@ -222,7 +263,6 @@ if "mensagem_sucesso" not in st.session_state:
 chuva_real_mm, temp_min, temp_max, clima_ok = buscar_chuva_real_sp()
 noticias_sp = buscar_noticias_chuva_sp()
 
-# Converte notícias com bairro identificado em pinos de notícia para o mapa
 pinos_noticias = []
 for idx, n in enumerate(noticias_sp):
     bairro = n["bairro_detectado"]
@@ -246,17 +286,15 @@ st.markdown(
     """
     <div class="header-box">
         <h1>🌧️ Alerta SP — Mobilidade Segura em Dias de Chuva</h1>
-        <p>Dados reais de chuva em São Paulo, notícias locais, relatos da comunidade e mapa de pontos críticos.</p>
+        <p>Dados reais de chuva em São Paulo, notícias locais, relatos validados por IA e mapa de pontos críticos.</p>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-# Barra lateral com filtros e opção de simulação manual
+# Barra lateral
 with st.sidebar:
     st.header("🧭 Seu Trajeto e Chuva")
-    st.write("Selecione os bairros do seu trajeto diário.")
-
     lista_bairros = list(BAIRROS_SP.keys())
     bairro_moradia = st.selectbox("Bairro onde você mora", options=lista_bairros, index=0)
     bairro_trabalho = st.selectbox("Bairro onde você trabalha", options=lista_bairros, index=3)
@@ -282,7 +320,7 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
 
-# Verifica pontos ativos de usuários e notícias no trajeto
+# Verifica pontos ativos no trajeto
 bairros_trajeto = {bairro_moradia, bairro_trabalho}
 pontos_usuario_trajeto = [
     item for item in st.session_state.ocorrencias_usuarios if item["bairro"] in bairros_trajeto
@@ -361,14 +399,14 @@ with col3:
         unsafe_allow_html=True,
     )
 
-# Mapa moderno e pinos diferenciados por fonte
+# Mapa
 st.markdown("### 🗺️ Mapa de Alagamentos e Notícias em São Paulo")
 
 st.markdown(
     """
     <div class="legenda-box">
         <strong>Legenda dos marcadores:</strong> &nbsp;&nbsp;
-        🔴 <strong>Vermelho:</strong> Relato da comunidade <strong>com foto</strong> &nbsp;&nbsp;|&nbsp;&nbsp;
+        🔴 <strong>Vermelho:</strong> Relato da comunidade <strong>com foto validada</strong> &nbsp;&nbsp;|&nbsp;&nbsp;
         🟠 <strong>Laranja:</strong> Relato da comunidade <strong>sem foto</strong> &nbsp;&nbsp;|&nbsp;&nbsp;
         🟣 <strong>Roxo:</strong> Notícia real de chuva/alagamento em SP
     </div>
@@ -380,15 +418,14 @@ lat_centro, lon_centro = BAIRROS_SP[bairro_moradia]
 mapa = folium.Map(
     location=[lat_centro, lon_centro],
     zoom_start=12,
-    tiles="CartoDB voyager",
+    tiles="OpenStreetMap",
 )
 
-# Pinos de usuários (vermelho com foto, laranja sem foto)
 for item in st.session_state.ocorrencias_usuarios:
     tem_foto = item.get("foto") is not None
     cor_pino = "red" if tem_foto else "orange"
     tipo_label = "Comunidade (com foto)" if tem_foto else "Comunidade (sem foto)"
-    foto_aviso_popup = "<br><span style='color:#059669;'>📷 Foto anexada no registro</span>" if tem_foto else ""
+    foto_aviso_popup = "<br><span style='color:#059669;'>📷 Foto verificada por IA</span>" if tem_foto else ""
 
     popup_html = f"""
     <div style="font-family: sans-serif; min-width: 210px;">
@@ -410,7 +447,6 @@ for item in st.session_state.ocorrencias_usuarios:
         icon=folium.Icon(color=cor_pino, icon="info-sign"),
     ).add_to(mapa)
 
-# Pinos de notícias reais (roxo)
 for noticia in pinos_noticias:
     popup_noticia = f"""
     <div style="font-family: sans-serif; min-width: 220px;">
@@ -429,13 +465,11 @@ for noticia in pinos_noticias:
         icon=folium.Icon(color="purple", icon="info-sign"),
     ).add_to(mapa)
 
-st_folium(mapa, use_container_width=True, height=500, returned_objects=[])
+st_folium(mapa, width=1100, height=500, returned_objects=[])
 
-# Mural de notícias reais sobre chuvas e alagamentos em SP
+# Mural de notícias reais
 st.divider()
 st.markdown("### 📰 Notícias Reais sobre Chuvas e Alagamentos em São Paulo")
-st.write("Manchetes recentes da imprensa local. Quando um bairro conhecido é citado na manchete, ele também ganha um pino roxo no mapa.")
-
 if not noticias_sp:
     st.info("Nenhuma manchete recente encontrada agora. Clique em 'Atualizar dados reais agora' na barra lateral.")
 else:
@@ -447,7 +481,7 @@ else:
             if n["link"]:
                 st.markdown(f"[Abrir notícia]({n['link']})")
 
-# Formulário de registro colaborativo
+# Formulário de registro colaborativo com moderação de imagem por IA
 st.divider()
 st.markdown("### 🚨 Reportar Novo Alagamento")
 
@@ -458,8 +492,8 @@ if st.session_state.mensagem_sucesso:
 st.markdown(
     """
     <div class="privacidade-box">
-        🔒 <strong>Sua privacidade importa:</strong> Para registrar um ponto, usamos apenas o seu apelido público (<code>@username</code>).
-        Não pedimos CPF nem endereço exato, e seu e-mail nunca é exibido publicamente.
+        🔒 <strong>Privacidade e Segurança:</strong> Usamos apenas o seu apelido público (<code>@username</code>).
+        Não pedimos CPF nem endereço exato. Fotos enviadas passam por <strong>verificação automática por IA</strong> para garantir que sejam registros reais de ruas ou alagamentos.
     </div>
     """,
     unsafe_allow_html=True,
@@ -484,7 +518,7 @@ with st.form("form_reportar_alagamento", clear_on_submit=True):
             options=NIVEIS_AGUA,
         )
         foto_enviada = st.file_uploader(
-            "Foto do local (opcional)",
+            "Foto do local (opcional — verificada automaticamente por IA)",
             type=["png", "jpg", "jpeg"],
         )
 
@@ -501,39 +535,50 @@ with st.form("form_reportar_alagamento", clear_on_submit=True):
         if not apelido_limpo:
             st.error("Por favor, preencha o seu apelido público (@username) antes de enviar o alerta.")
         else:
-            if not apelido_limpo.startswith("@"):
-                apelido_limpo = f"@{apelido_limpo}"
+            foto_bytes = None
+            imagem_aprovada = True
 
-            lat_bairro, lon_bairro = BAIRROS_SP[bairro_escolhido]
-            deslocamento = (len(st.session_state.ocorrencias_usuarios) % 5) * 0.0025
-            novo_id = max([o["id"] for o in st.session_state.ocorrencias_usuarios], default=0) + 1
-            hora_registro = datetime.datetime.now().strftime("%H:%M")
+            if foto_enviada is not None:
+                foto_bytes = foto_enviada.getvalue()
+                with st.spinner("🤖 Analisando a imagem com IA para garantir segurança e relevância..."):
+                    imagem_aprovada, mensagem_ia = validar_imagem_com_ia(foto_bytes)
 
-            foto_bytes = foto_enviada.getvalue() if foto_enviada is not None else None
-            texto_descricao = (
-                descricao_curta.strip()
-                if descricao_curta.strip()
-                else "Ponto de alagamento informado pela comunidade."
-            )
+                if not imagem_aprovada:
+                    st.error(f"🚫 {mensagem_ia}")
 
-            nova_ocorrencia = {
-                "id": novo_id,
-                "usuario": apelido_limpo,
-                "bairro": bairro_escolhido,
-                "lat": lat_bairro + deslocamento,
-                "lon": lon_bairro - deslocamento,
-                "nivel": nivel_escolhido,
-                "horario": hora_registro,
-                "descricao": texto_descricao,
-                "foto": foto_bytes,
-                "secou_votos": 0,
-            }
+            if imagem_aprovada:
+                if not apelido_limpo.startswith("@"):
+                    apelido_limpo = f"@{apelido_limpo}"
 
-            st.session_state.ocorrencias_usuarios.append(nova_ocorrencia)
-            st.session_state.mensagem_sucesso = "Obrigado por ajudar outros trabalhadores!"
-            st.rerun()
+                lat_bairro, lon_bairro = BAIRROS_SP[bairro_escolhido]
+                deslocamento = (len(st.session_state.ocorrencias_usuarios) % 5) * 0.0025
+                novo_id = max([o["id"] for o in st.session_state.ocorrencias_usuarios], default=0) + 1
+                hora_registro = datetime.datetime.now().strftime("%H:%M")
 
-# Lista de ocorrências da comunidade e validação "Já secou"
+                texto_descricao = (
+                    descricao_curta.strip()
+                    if descricao_curta.strip()
+                    else "Ponto de alagamento informado pela comunidade."
+                )
+
+                nova_ocorrencia = {
+                    "id": novo_id,
+                    "usuario": apelido_limpo,
+                    "bairro": bairro_escolhido,
+                    "lat": lat_bairro + deslocamento,
+                    "lon": lon_bairro - deslocamento,
+                    "nivel": nivel_escolhido,
+                    "horario": hora_registro,
+                    "descricao": texto_descricao,
+                    "foto": foto_bytes,
+                    "secou_votos": 0,
+                }
+
+                st.session_state.ocorrencias_usuarios.append(nova_ocorrencia)
+                st.session_state.mensagem_sucesso = "Obrigado por ajudar outros trabalhadores!"
+                st.rerun()
+
+# Lista de ocorrências da comunidade
 st.divider()
 st.markdown("### 📋 Ocorrências da Comunidade e Validação")
 st.write("A água baixou por aí? Clique em **Já secou**. Com **3 confirmações**, o registro sai do mapa.")
@@ -549,7 +594,7 @@ else:
 
             with c_info:
                 destaque_trajeto = " • 🧭 **No seu trajeto**" if item["bairro"] in bairros_trajeto else ""
-                tem_foto_tag = "📷 Com foto" if item.get("foto") is not None else "📝 Sem foto"
+                tem_foto_tag = "📷 Com foto verificada" if item.get("foto") is not None else "📝 Sem foto"
                 st.markdown(f"**📍 {item['bairro']}** — *{item['nivel']}* • {tem_foto_tag}{destaque_trajeto}")
                 st.write(item["descricao"])
                 st.caption(
@@ -559,7 +604,7 @@ else:
 
             with c_foto:
                 if item.get("foto") is not None:
-                    st.image(item["foto"], caption="Foto do registro", use_container_width=True)
+                    st.image(item["foto"], caption="Foto validada", use_container_width=True)
                 else:
                     st.caption("Sem foto anexada")
 
