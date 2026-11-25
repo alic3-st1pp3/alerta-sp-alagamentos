@@ -19,7 +19,7 @@ st.set_page_config(
     layout="wide",
 )
 
-# Estilo visual acessível e amigável
+# Estilo visual acessível e de alto contraste
 st.markdown(
     """
     <style>
@@ -27,6 +27,26 @@ st.markdown(
             background-color: #F8FAFC;
             color: #0F172A;
             font-size: 16px;
+        }
+        /* Garante rótulos escuros e legíveis em formulários, inputs e selects */
+        label, .stTextInput label, .stSelectbox label, .stTextArea label,
+        .stFileUploader label, .stSlider label, .stCheckbox label {
+            color: #0F172A !important;
+            font-weight: 600 !important;
+            font-size: 15px !important;
+        }
+        .stMarkdown p, .stCaption, [data-testid="stCaptionContainer"] {
+            color: #1E293B !important;
+        }
+        [data-testid="stFileUploaderDropzone"] {
+            background-color: #FFFFFF !important;
+            border: 1.5px dashed #94A3B8 !important;
+            color: #0F172A !important;
+        }
+        [data-testid="stFileUploaderDropzone"] span,
+        [data-testid="stFileUploaderDropzone"] small,
+        [data-testid="stFileUploaderDropzone"] div {
+            color: #1E293B !important;
         }
         .header-box {
             background-color: #1E3A8A;
@@ -49,23 +69,23 @@ st.markdown(
             background-color: #FFFFFF;
             border-radius: 12px;
             padding: 18px 20px;
-            border: 1px solid #E2E8F0;
-            box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04);
+            border: 1px solid #CBD5E1;
+            box-shadow: 0 2px 6px rgba(15, 23, 42, 0.05);
         }
         .card-titulo {
             font-size: 15px;
-            font-weight: 600;
-            color: #475569;
+            font-weight: 700;
+            color: #334155;
             margin-bottom: 6px;
         }
         .card-valor {
             font-size: 24px;
-            font-weight: 700;
+            font-weight: 800;
             margin: 0;
         }
         .card-sub {
             font-size: 14px;
-            color: #475569;
+            color: #334155;
             margin-top: 6px;
         }
         .privacidade-box {
@@ -73,42 +93,127 @@ st.markdown(
             border-left: 4px solid #1E3A8A;
             padding: 12px 16px;
             border-radius: 8px;
-            color: #1E293B;
+            color: #0F172A;
             font-size: 15px;
             margin-bottom: 16px;
         }
+        .escopo-box {
+            background-color: #FFFBEB;
+            border-left: 4px solid #D97706;
+            padding: 12px 16px;
+            border-radius: 8px;
+            color: #0F172A;
+            font-size: 15px;
+            margin-bottom: 14px;
+        }
         .legenda-box {
             background-color: #FFFFFF;
-            border: 1px solid #E2E8F0;
+            border: 1px solid #CBD5E1;
             border-radius: 10px;
             padding: 12px 16px;
             margin-bottom: 12px;
             font-size: 15px;
+            color: #0F172A;
         }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# Bairros da cidade de São Paulo com coordenadas aproximadas
-BAIRROS_SP = {
-    "Itaquera": (-23.5414, -46.4733),
-    "Lapa": (-23.5275, -46.7036),
+# 96 distritos oficiais do município de São Paulo com coordenadas aproximadas
+DISTRITOS_SP = {
+    "Água Rasa": (-23.5683, -46.5719),
+    "Alto de Pinheiros": (-23.5494, -46.7097),
+    "Anhanguera": (-23.4381, -46.7836),
+    "Aricanduva": (-23.5700, -46.5064),
+    "Artur Alvim": (-23.5403, -46.4858),
+    "Barra Funda": (-23.5256, -46.6656),
+    "Bela Vista": (-23.5614, -46.6464),
+    "Belém": (-23.5425, -46.5906),
+    "Bom Retiro": (-23.5289, -46.6353),
+    "Brás": (-23.5450, -46.6158),
+    "Brasilândia": (-23.4614, -46.6939),
+    "Butantã": (-23.5719, -46.7081),
+    "Cachoeirinha": (-23.4750, -46.6636),
+    "Cambuci": (-23.5617, -46.6164),
+    "Campo Belo": (-23.6233, -46.6697),
+    "Campo Grande": (-23.6797, -46.6933),
+    "Campo Limpo": (-23.6489, -46.7594),
     "Capão Redondo": (-23.6686, -46.7806),
-    "Sé": (-23.5505, -46.6339),
+    "Carrão": (-23.5469, -46.5397),
+    "Casa Verde": (-23.5117, -46.6572),
+    "Cidade Ademar": (-23.6758, -46.6553),
+    "Cidade Dutra": (-23.7294, -46.6978),
+    "Cidade Líder": (-23.5644, -46.4931),
+    "Cidade Tiradentes": (-23.5917, -46.4042),
+    "Consolação": (-23.5558, -46.6611),
+    "Cursino": (-23.6283, -46.6197),
+    "Ermelino Matarazzo": (-23.4956, -46.4817),
+    "Freguesia do Ó": (-23.5008, -46.7008),
+    "Grajaú": (-23.7764, -46.6889),
+    "Guaianases": (-23.5439, -46.4125),
+    "Iguatemi": (-23.5964, -46.4253),
+    "Ipiranga": (-23.5914, -46.6064),
+    "Itaim Bibi": (-23.5856, -46.6819),
+    "Itaim Paulista": (-23.5017, -46.3983),
+    "Itaquera": (-23.5414, -46.4733),
+    "Jabaquara": (-23.6464, -46.6408),
+    "Jaçanã": (-23.4678, -46.5789),
+    "Jaguará": (-23.5122, -46.7486),
+    "Jaguaré": (-23.5364, -46.7536),
+    "Jaraguá": (-23.4556, -46.7358),
+    "Jardim Ângela": (-23.6947, -46.7717),
+    "Jardim Helena": (-23.4892, -46.4167),
+    "Jardim Paulista": (-23.5689, -46.6689),
+    "Jardim São Luís": (-23.6708, -46.7372),
+    "José Bonifácio": (-23.5553, -46.4378),
+    "Lapa": (-23.5275, -46.7036),
+    "Liberdade": (-23.5583, -46.6353),
+    "Limão": (-23.5072, -46.6789),
+    "Mandaqui": (-23.4839, -46.6339),
+    "Marsilac": (-23.9242, -46.6969),
+    "Moema": (-23.5994, -46.6656),
+    "Mooca": (-23.5558, -46.5978),
+    "Morumbi": (-23.6000, -46.7200),
+    "Parelheiros": (-23.8297, -46.7308),
+    "Pari": (-23.5328, -46.6156),
+    "Parque do Carmo": (-23.5667, -46.4625),
+    "Pedreira": (-23.6939, -46.6431),
+    "Penha": (-23.5289, -46.5419),
+    "Perdizes": (-23.5361, -46.6736),
+    "Perus": (-23.4067, -46.7539),
     "Pinheiros": (-23.5673, -46.7019),
+    "Ponte Rasa": (-23.5161, -46.4947),
+    "Raposo Tavares": (-23.5808, -46.7783),
+    "República": (-23.5436, -46.6428),
+    "Rio Pequeno": (-23.5681, -46.7556),
+    "Sacomã": (-23.6019, -46.5961),
+    "Santa Cecília": (-23.5356, -46.6517),
     "Santana": (-23.5025, -46.6247),
     "Santo Amaro": (-23.6549, -46.7102),
-    "Mooca": (-23.5558, -46.5978),
-    "Grajaú": (-23.7764, -46.6889),
+    "São Domingos": (-23.4956, -46.7433),
+    "São Lucas": (-23.5881, -46.5397),
+    "São Mateus": (-23.6075, -46.4756),
+    "São Miguel": (-23.4958, -46.4419),
+    "São Rafael": (-23.6272, -46.4539),
+    "Sapopemba": (-23.6075, -46.5064),
+    "Saúde": (-23.6147, -46.6383),
+    "Sé": (-23.5505, -46.6339),
     "Tatuapé": (-23.5403, -46.5764),
-    "Jabaquara": (-23.6464, -46.6408),
-    "Butantã": (-23.5719, -46.7081),
-    "Zona Leste": (-23.5450, -46.4950),
-    "Zona Sul": (-23.6500, -46.6900),
-    "Zona Norte": (-23.4950, -46.6300),
-    "Zona Oeste": (-23.5550, -46.7100),
-    "Centro": (-23.5489, -46.6388),
+    "Tremembé": (-23.4578, -46.6197),
+    "Tucuruvi": (-23.4792, -46.6031),
+    "Vila Andrade": (-23.6253, -46.7311),
+    "Vila Curuçá": (-23.5131, -46.4161),
+    "Vila Formosa": (-23.5656, -46.5442),
+    "Vila Guilherme": (-23.5178, -46.6042),
+    "Vila Jacuí": (-23.5019, -46.4556),
+    "Vila Leopoldina": (-23.5308, -46.7317),
+    "Vila Maria": (-23.5144, -46.5881),
+    "Vila Mariana": (-23.5892, -46.6347),
+    "Vila Matilde": (-23.5342, -46.5194),
+    "Vila Medeiros": (-23.4889, -46.5889),
+    "Vila Prudente": (-23.5819, -46.5800),
+    "Vila Sônia": (-23.5978, -46.7367),
 }
 
 MUNICIPIOS_GRANDE_SP = [
@@ -269,34 +374,31 @@ def buscar_noticias_sp_e_grande_sp():
             fonte = entry.get("source", {}).get("title", "Imprensa local")
             texto_norm = normalizar_texto(f"{titulo} {fonte}")
 
-            # Exclui notícias claramente ligadas ao interior/litoral fora da Grande SP
             if any(re.search(rf"\b{re.escape(termo)}\b", texto_norm) for termo in TERMOS_INTERIOR_EXCLUIR):
                 continue
 
-            # Confirma vínculo com município de SP ou Grande SP
             tem_grande_sp = any(
                 re.search(rf"\b{re.escape(mun)}\b", texto_norm) for mun in MUNICIPIOS_GRANDE_SP
             )
             if not tem_grande_sp and "sp" not in texto_norm.split():
                 continue
 
-            bairro_detectado = None
-            for bairro in BAIRROS_SP:
-                bairro_norm = normalizar_texto(bairro)
-                if re.search(rf"\b{re.escape(bairro_norm)}\b", texto_norm):
-                    bairro_detectado = bairro
+            distrito_detectado = None
+            for distrito in DISTRITOS_SP:
+                distrito_norm = normalizar_texto(distrito)
+                if re.search(rf"\b{re.escape(distrito_norm)}\b", texto_norm):
+                    distrito_detectado = distrito
                     break
 
-            # Se for notícia da capital/Grande SP sem bairro específico citado, associa ao Centro de SP para plotar no mapa
-            if not bairro_detectado:
-                bairro_detectado = "Centro"
+            if not distrito_detectado:
+                distrito_detectado = "Sé"
 
             noticias.append(
                 {
                     "titulo": titulo,
                     "link": link,
                     "fonte": fonte,
-                    "bairro_detectado": bairro_detectado,
+                    "distrito_detectado": distrito_detectado,
                 }
             )
     except Exception:
@@ -312,7 +414,7 @@ if "ocorrencias_usuarios" not in st.session_state:
         {
             "id": 1,
             "usuario": "@carlos_zl",
-            "bairro": "Itaquera",
+            "distrito": "Itaquera",
             "lat": -23.5414,
             "lon": -46.4733,
             "nivel": "Intransitável - Água alta",
@@ -324,7 +426,7 @@ if "ocorrencias_usuarios" not in st.session_state:
         {
             "id": 2,
             "usuario": "@ana_lapa",
-            "bairro": "Lapa",
+            "distrito": "Lapa",
             "lat": -23.5275,
             "lon": -46.7036,
             "nivel": "Água na calçada",
@@ -336,386 +438,4 @@ if "ocorrencias_usuarios" not in st.session_state:
     ]
 
 if "mensagem_sucesso" not in st.session_state:
-    st.session_state.mensagem_sucesso = None
-
-chuva_real_mm, temp_min, temp_max, clima_ok = buscar_chuva_real_sp()
-noticias_sp = buscar_noticias_sp_e_grande_sp()
-
-# Monta pinos de notícias reais (roxo)
-pinos_noticias = []
-for idx, n in enumerate(noticias_sp):
-    bairro = n["bairro_detectado"]
-    lat_b, lon_b = BAIRROS_SP.get(bairro, BAIRROS_SP["Centro"])
-    desloc = ((idx % 5) - 2) * 0.0045
-    pinos_noticias.append(
-        {
-            "tipo_label": "Notícia Real (SP/Grande SP)",
-            "bairro": bairro,
-            "lat": lat_b + desloc,
-            "lon": lon_b - desloc,
-            "resumo": f"{n['fonte']}: {n['titulo']}",
-            "cor": [139, 92, 246, 230],  # Roxo
-        }
-    )
-
-# Cabeçalho principal
-st.markdown(
-    """
-    <div class="header-box">
-        <h1>🌧️ Alerta SP — Mobilidade Segura em Dias de Chuva</h1>
-        <p>Dados reais de chuva em São Paulo, notícias locais, relatos validados por IA e mapa de pontos críticos.</p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-# Barra lateral
-with st.sidebar:
-    st.header("🧭 Seu Trajeto e Chuva")
-    lista_bairros = list(BAIRROS_SP.keys())
-    bairro_moradia = st.selectbox("Bairro onde você mora", options=lista_bairros, index=0)
-    bairro_trabalho = st.selectbox("Bairro onde você trabalha", options=lista_bairros, index=3)
-
-    st.divider()
-    st.subheader("🌦️ Clima Real (São Paulo)")
-    if clima_ok:
-        st.success(f"Previsão real hoje: **{chuva_real_mm} mm**")
-        if temp_min is not None and temp_max is not None:
-            st.caption(f"Temperatura prevista: {temp_min}°C a {temp_max}°C")
-    else:
-        st.warning("Sem conexão com a API meteorológica no momento; usando estimativa.")
-
-    usar_simulacao = st.checkbox("Simular outro volume de chuva manualmente", value=False)
-    if usar_simulacao:
-        chuva_ativa_mm = float(
-            st.slider("Chuva simulada (mm)", min_value=0, max_value=80, value=int(chuva_real_mm), step=1)
-        )
-    else:
-        chuva_ativa_mm = chuva_real_mm
-
-    if st.button("🔄 Atualizar dados reais agora", use_container_width=True):
-        st.cache_data.clear()
-        st.rerun()
-
-# Verifica pontos ativos no trajeto
-bairros_trajeto = {bairro_moradia, bairro_trabalho}
-pontos_usuario_trajeto = [
-    item for item in st.session_state.ocorrencias_usuarios if item["bairro"] in bairros_trajeto
-]
-noticias_no_trajeto = [
-    item for item in pinos_noticias if item["bairro"] in bairros_trajeto
-]
-tem_alerta_trajeto = len(pontos_usuario_trajeto) > 0 or len(noticias_no_trajeto) > 0
-
-if tem_alerta_trajeto:
-    risco_texto = "Risco Alto"
-    risco_cor = "#DC2626"
-    risco_aviso = "Ponto ou notícia de alagamento no seu trajeto!"
-elif chuva_ativa_mm < 10:
-    risco_texto = "Risco Baixo"
-    risco_cor = "#059669"
-    risco_aviso = "Trajeto livre de alertas críticos pela chuva."
-elif chuva_ativa_mm <= 30:
-    risco_texto = "Risco Moderado"
-    risco_cor = "#D97706"
-    risco_aviso = "Atenção: chance de poças e trânsito lento."
-else:
-    risco_texto = "Risco Alto"
-    risco_cor = "#DC2626"
-    risco_aviso = "Alerta: chuva forte com alto risco de alagamento."
-
-if tem_alerta_trajeto:
-    bairros_afetados = sorted(
-        {p["bairro"] for p in pontos_usuario_trajeto} | {n["bairro"] for n in noticias_no_trajeto}
-    )
-    st.error(
-        f"⚠️ **Atenção no seu trajeto ({bairro_moradia} ↔ {bairro_trabalho}):** "
-        f"Há registro ou notícia envolvendo **{', '.join(bairros_afetados)}**. "
-        f"Considere sair mais cedo, aguardar ou buscar rota alternativa."
-    )
-
-total_pinos = len(st.session_state.ocorrencias_usuarios) + len(pinos_noticias)
-
-# Cartões de resumo no topo
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    origem_chuva = "Simulação manual" if usar_simulacao else "Previsão real (Open-Meteo)"
-    st.markdown(
-        f"""
-        <div class="card-resumo">
-            <div class="card-titulo">☔ Chuva Prevista Hoje</div>
-            <p class="card-valor" style="color: #1E3A8A;">{chuva_ativa_mm} mm</p>
-            <div class="card-sub">{origem_chuva}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-with col2:
-    st.markdown(
-        f"""
-        <div class="card-resumo">
-            <div class="card-titulo">🚦 Nível de Risco no Trajeto</div>
-            <p class="card-valor" style="color: {risco_cor};">{risco_texto}</p>
-            <div class="card-sub">{bairro_moradia} ↔ {bairro_trabalho} • {risco_aviso}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-with col3:
-    st.markdown(
-        f"""
-        <div class="card-resumo">
-            <div class="card-titulo">📍 Marcadores no Mapa</div>
-            <p class="card-valor" style="color: #DC2626;">{total_pinos}</p>
-            <div class="card-sub">{len(st.session_state.ocorrencias_usuarios)} da comunidade • {len(pinos_noticias)} de notícias</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-# Mapa nativo PyDeck focado na cidade de São Paulo
-st.markdown("### 🗺️ Mapa de Alagamentos e Notícias — Cidade de São Paulo")
-
-st.markdown(
-    """
-    <div class="legenda-box">
-        <strong>Legenda dos marcadores:</strong> &nbsp;&nbsp;
-        🔴 <strong>Vermelho:</strong> Comunidade <strong>com foto</strong> &nbsp;&nbsp;|&nbsp;&nbsp;
-        🟠 <strong>Laranja:</strong> Comunidade <strong>sem foto</strong> &nbsp;&nbsp;|&nbsp;&nbsp;
-        🟣 <strong>Roxo:</strong> Notícia real de chuva/alagamento (SP / Grande SP)
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-dados_mapa = []
-
-for item in st.session_state.ocorrencias_usuarios:
-    tem_foto = item.get("foto") is not None
-    dados_mapa.append(
-        {
-            "lat": item["lat"],
-            "lon": item["lon"],
-            "bairro": item["bairro"],
-            "tipo_label": "Comunidade (com foto)" if tem_foto else "Comunidade (sem foto)",
-            "resumo": f"{item['nivel']} — {item['descricao']} ({item['usuario']})",
-            "cor": [220, 38, 38, 235] if tem_foto else [249, 115, 22, 235],
-        }
-    )
-
-for pino in pinos_noticias:
-    dados_mapa.append(
-        {
-            "lat": pino["lat"],
-            "lon": pino["lon"],
-            "bairro": pino["bairro"],
-            "tipo_label": pino["tipo_label"],
-            "resumo": pino["resumo"],
-            "cor": pino["cor"],
-        }
-    )
-
-df_mapa = pd.DataFrame(dados_mapa)
-
-# Garante que o foco inicial fique dentro da cidade de São Paulo
-lat_foco, lon_foco = BAIRROS_SP.get(bairro_moradia, (-23.5505, -46.6339))
-
-layer = pdk.Layer(
-    "ScatterplotLayer",
-    data=df_mapa,
-    get_position="[lon, lat]",
-    get_color="cor",
-    get_radius=420,
-    pickable=True,
-    auto_highlight=True,
-)
-
-view_state = pdk.ViewState(
-    latitude=lat_foco,
-    longitude=lon_foco,
-    zoom=11.3,
-    min_zoom=10.2,
-    max_zoom=15.0,
-    pitch=0,
-)
-
-tooltip = {
-    "html": "<b>{tipo_label}</b><br/><b>Bairro:</b> {bairro}<br/>{resumo}",
-    "style": {
-        "backgroundColor": "#0F172A",
-        "color": "#FFFFFF",
-        "fontSize": "13px",
-        "borderRadius": "8px",
-        "padding": "10px",
-    },
-}
-
-st.pydeck_chart(
-    pdk.Deck(
-        map_style="light",
-        initial_view_state=view_state,
-        layers=[layer],
-        tooltip=tooltip,
-    ),
-    use_container_width=True,
-    height=480,
-)
-
-# Mural de notícias reais focadas em SP e Grande SP
-st.divider()
-st.markdown("### 📰 Notícias Reais — São Paulo e Grande SP")
-st.write("Manchetes recentes da imprensa local focadas na capital e região metropolitana (sem cidades do interior). Passe o mouse nos pontos roxos no mapa para ver os detalhes.")
-
-if not noticias_sp:
-    st.info("Nenhuma manchete recente encontrada agora para SP/Grande SP. Clique em 'Atualizar dados reais agora' na barra lateral.")
-else:
-    for n in noticias_sp:
-        with st.container(border=True):
-            st.markdown(f"**{n['titulo']}**")
-            st.caption(f"Fonte: {n['fonte']} • 📍 Referência no mapa: **{n['bairro_detectado']}**")
-            if n["link"]:
-                st.markdown(f"[Abrir notícia]({n['link']})")
-
-# Formulário de registro colaborativo com moderação de imagem por IA
-st.divider()
-st.markdown("### 🚨 Reportar Novo Alagamento")
-
-if st.session_state.mensagem_sucesso:
-    st.success(st.session_state.mensagem_sucesso)
-    st.session_state.mensagem_sucesso = None
-
-st.markdown(
-    """
-    <div class="privacidade-box">
-        🔒 <strong>Privacidade e Segurança:</strong> Usamos apenas o seu apelido público (<code>@username</code>).
-        Não pedimos CPF nem endereço exato. Fotos enviadas passam por <strong>verificação automática por IA</strong> para garantir que sejam registros reais de ruas ou alagamentos.
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-with st.form("form_reportar_alagamento", clear_on_submit=True):
-    col_form1, col_form2 = st.columns(2)
-
-    with col_form1:
-        apelido_input = st.text_input(
-            "Apelido público (@username) *",
-            placeholder="Ex.: @maria_zl ou joao_sp",
-        )
-        bairro_escolhido = st.selectbox(
-            "Bairro do alagamento *",
-            options=list(BAIRROS_SP.keys()),
-        )
-
-    with col_form2:
-        nivel_escolhido = st.selectbox(
-            "Nível da água *",
-            options=NIVEIS_AGUA,
-        )
-        foto_enviada = st.file_uploader(
-            "Foto do local (opcional — verificada automaticamente por IA)",
-            type=["png", "jpg", "jpeg"],
-        )
-
-    descricao_curta = st.text_area(
-        "Descrição curta (opcional — até 140 caracteres)",
-        max_chars=140,
-        placeholder="Ex.: Perto do ponto de ônibus, água subindo rápido na via.",
-    )
-
-    enviado = st.form_submit_button("Enviar Alerta", type="primary", use_container_width=True)
-
-    if enviado:
-        apelido_limpo = apelido_input.strip()
-        if not apelido_limpo:
-            st.error("Por favor, preencha o seu apelido público (@username) antes de enviar o alerta.")
-        else:
-            foto_bytes = None
-            imagem_aprovada = True
-
-            if foto_enviada is not None:
-                foto_bytes = foto_enviada.getvalue()
-                with st.spinner("🤖 Analisando a imagem com IA para garantir segurança e relevância..."):
-                    imagem_aprovada, mensagem_ia = validar_imagem_com_ia(foto_bytes)
-
-                if not imagem_aprovada:
-                    st.error(f"🚫 {mensagem_ia}")
-
-            if imagem_aprovada:
-                if not apelido_limpo.startswith("@"):
-                    apelido_limpo = f"@{apelido_limpo}"
-
-                lat_bairro, lon_bairro = BAIRROS_SP[bairro_escolhido]
-                deslocamento = (len(st.session_state.ocorrencias_usuarios) % 5) * 0.0025
-                novo_id = max([o["id"] for o in st.session_state.ocorrencias_usuarios], default=0) + 1
-                hora_registro = datetime.datetime.now().strftime("%H:%M")
-
-                texto_descricao = (
-                    descricao_curta.strip()
-                    if descricao_curta.strip()
-                    else "Ponto de alagamento informado pela comunidade."
-                )
-
-                nova_ocorrencia = {
-                    "id": novo_id,
-                    "usuario": apelido_limpo,
-                    "bairro": bairro_escolhido,
-                    "lat": lat_bairro + deslocamento,
-                    "lon": lon_bairro - deslocamento,
-                    "nivel": nivel_escolhido,
-                    "horario": hora_registro,
-                    "descricao": texto_descricao,
-                    "foto": foto_bytes,
-                    "secou_votos": 0,
-                }
-
-                st.session_state.ocorrencias_usuarios.append(nova_ocorrencia)
-                st.session_state.mensagem_sucesso = "Obrigado por ajudar outros trabalhadores!"
-                st.rerun()
-
-# Lista de ocorrências da comunidade
-st.divider()
-st.markdown("### 📋 Ocorrências da Comunidade e Validação")
-st.write("A água baixou por aí? Clique em **Já secou**. Com **3 confirmações**, o registro sai do mapa.")
-
-if not st.session_state.ocorrencias_usuarios:
-    st.info("Não há relatos de usuários ativos no momento.")
-else:
-    ocorrencia_para_remover = None
-
-    for item in st.session_state.ocorrencias_usuarios:
-        with st.container(border=True):
-            c_info, c_foto, c_acao = st.columns([4, 2, 2])
-
-            with c_info:
-                destaque_trajeto = " • 🧭 **No seu trajeto**" if item["bairro"] in bairros_trajeto else ""
-                tem_foto_tag = "📷 Com foto verificada" if item.get("foto") is not None else "📝 Sem foto"
-                st.markdown(f"**📍 {item['bairro']}** — *{item['nivel']}* • {tem_foto_tag}{destaque_trajeto}")
-                st.write(item["descricao"])
-                st.caption(
-                    f"Registrado às {item['horario']} por **{item['usuario']}** • "
-                    f"Confirmações de que secou: **{item['secou_votos']}/3**"
-                )
-
-            with c_foto:
-                if item.get("foto") is not None:
-                    st.image(item["foto"], caption="Foto validada", use_container_width=True)
-                else:
-                    st.caption("Sem foto anexada")
-
-            with c_acao:
-                st.write("")
-                if st.button("✅ Já secou", key=f"secou_{item['id']}", use_container_width=True):
-                    item["secou_votos"] += 1
-                    if item["secou_votos"] >= 3:
-                        ocorrencia_para_remover = item["id"]
-                    st.rerun()
-
-    if ocorrencia_para_remover is not None:
-        st.session_state.ocorrencias_usuarios = [
-            o for o in st.session_state.ocorrencias_usuarios if o["id"] != ocorrencia_para_remover
-        ]
-        st.rerun()
+    st.session_state.mensagem_sucesso
