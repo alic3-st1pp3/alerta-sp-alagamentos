@@ -1,4 +1,5 @@
 import datetime
+import email.utils
 import io
 import json
 import math
@@ -69,7 +70,7 @@ st.markdown(
             color: #1E293B;
         }
 
-        /* Correção definitiva de contraste nos botões primários e de envio (Ver no mapa / Enviar Alerta) */
+        /* Correção definitiva de contraste nos botões primários e de envio */
         button[kind="primary"],
         button[data-testid="baseButton-primary"],
         [data-testid="stFormSubmitButton"] button,
@@ -97,7 +98,7 @@ st.markdown(
             color: #FFFFFF !important;
         }
 
-        /* Botões secundários (Atualizar dados / Já secou) */
+        /* Botões secundários */
         button[kind="secondary"],
         button[data-testid="baseButton-secondary"] {
             background-color: #FFFFFF !important;
@@ -322,6 +323,29 @@ def normalizar_texto(texto: str) -> str:
     return texto.translate(mapa_acentos).lower()
 
 
+def formatar_data_noticia(entry: dict) -> str:
+    """Extrai e formata a data/hora de publicação de uma notícia do feed RSS para horário de SP."""
+    fuso_sp = datetime.timezone(datetime.timedelta(hours=-3))
+    try:
+        parsed = entry.get("published_parsed") or entry.get("updated_parsed")
+        if parsed and len(parsed) >= 6:
+            dt_utc = datetime.datetime(*parsed[:6], tzinfo=datetime.timezone.utc)
+            dt_sp = dt_utc.astimezone(fuso_sp)
+            return dt_sp.strftime("%d/%m/%Y às %H:%M")
+
+        texto_data = entry.get("published") or entry.get("updated") or ""
+        if texto_data:
+            dt_parsed = email.utils.parsedate_to_datetime(texto_data)
+            if dt_parsed.tzinfo is None:
+                dt_parsed = dt_parsed.replace(tzinfo=datetime.timezone.utc)
+            dt_sp = dt_parsed.astimezone(fuso_sp)
+            return dt_sp.strftime("%d/%m/%Y às %H:%M")
+    except Exception:
+        pass
+
+    return "Data não informada"
+
+
 @st.cache_data(ttl=86400)
 def geocodificar_endereco_gsp(endereco: str, municipio: str):
     """
@@ -329,7 +353,7 @@ def geocodificar_endereco_gsp(endereco: str, municipio: str):
     usando o Nominatim (OpenStreetMap). Retorna (lat, lon, endereco_encontrado, exato).
     """
     lat_padrao, lon_padrao = MUNICIPIOS_GSP_COORDS.get(municipio, (-23.5505, -46.6339))
-    endereco_limpo = endereco.strip()
+    endereco_limpo = (endereco or "").strip()
 
     if not endereco_limpo:
         return lat_padrao, lon_padrao, municipio, False
@@ -354,7 +378,7 @@ def geocodificar_endereco_gsp(endereco: str, municipio: str):
                     "bounded": 1,
                 },
                 headers=headers,
-                timeout=6,
+                timeout=5,
             )
             resp.raise_for_status()
             resultados = resp.json()
@@ -485,7 +509,7 @@ def buscar_chuva_real_gsp():
 def buscar_noticias_sp_e_grande_sp():
     """
     Busca notícias recentes sobre alagamento e chuva focadas em São Paulo e Grande SP,
-    excluindo manchetes voltadas a cidades do interior paulista.
+    excluindo manchetes voltadas a cidades do interior paulista e incluindo data formatada.
     """
     query = urllib.parse.quote(
         '(alagamento OR enchente OR "chuva forte") ("São Paulo" OR "Grande SP" OR Guarulhos OR Osasco OR ABC)'
@@ -495,38 +519,49 @@ def buscar_noticias_sp_e_grande_sp():
 
     try:
         feed = feedparser.parse(url)
-        for entry in feed.entries[:15]:
-            titulo = entry.get("title", "Notícia sem título")
-            link = entry.get("link", "")
-            fonte = entry.get("source", {}).get("title", "Imprensa local")
-            texto_norm = normalizar_texto(f"{titulo} {fonte}")
-
-            if any(re.search(rf"\b{re.escape(termo)}\b", texto_norm) for termo in TERMOS_INTERIOR_EXCLUIR):
-                continue
-
-            municipio_detectado = None
-            for mun in MUNICIPIOS_GSP_COORDS:
-                mun_norm = normalizar_texto(mun)
-                if re.search(rf"\b{re.escape(mun_norm)}\b", texto_norm):
-                    municipio_detectado = mun
-                    break
-
-            if not municipio_detectado:
-                if "abc" in texto_norm.split():
-                    municipio_detectado = "Santo André"
-                elif "sp" in texto_norm.split() or "grande sp" in texto_norm:
-                    municipio_detectado = "São Paulo"
+        entries = getattr(feed, "entries", []) or []
+        for entry in entries[:20]:
+            try:
+                titulo = str(entry.get("title") or "Notícia sem título")
+                link = str(entry.get("link") or "")
+                fonte_obj = entry.get("source")
+                if isinstance(fonte_obj, dict):
+                    fonte = str(fonte_obj.get("title") or "Imprensa local")
                 else:
+                    fonte = str(getattr(fonte_obj, "title", None) or "Imprensa local")
+
+                data_formatada = formatar_data_noticia(entry)
+                texto_norm = normalizar_texto(f"{titulo} {fonte}")
+
+                if any(re.search(rf"\b{re.escape(termo)}\b", texto_norm) for termo in TERMOS_INTERIOR_EXCLUIR):
                     continue
 
-            noticias.append(
-                {
-                    "titulo": titulo,
-                    "link": link,
-                    "fonte": fonte,
-                    "municipio_detectado": municipio_detectado,
-                }
-            )
+                municipio_detectado = None
+                for mun in MUNICIPIOS_GSP_COORDS:
+                    mun_norm = normalizar_texto(mun)
+                    if re.search(rf"\b{re.escape(mun_norm)}\b", texto_norm):
+                        municipio_detectado = mun
+                        break
+
+                if not municipio_detectado:
+                    if "abc" in texto_norm.split():
+                        municipio_detectado = "Santo André"
+                    elif "sp" in texto_norm.split() or "grande sp" in texto_norm:
+                        municipio_detectado = "São Paulo"
+                    else:
+                        continue
+
+                noticias.append(
+                    {
+                        "titulo": titulo,
+                        "link": link,
+                        "fonte": fonte,
+                        "data_publicacao": data_formatada,
+                        "municipio_detectado": municipio_detectado,
+                    }
+                )
+            except Exception:
+                continue
     except Exception:
         pass
 
@@ -603,7 +638,7 @@ for idx, n in enumerate(noticias_sp):
             "local_titulo": mun,
             "lat": lat_b + desloc,
             "lon": lon_b - desloc,
-            "resumo": f"{n['fonte']}: {n['titulo']}",
+            "resumo": f"{n['fonte']} ({n['data_publicacao']}): {n['titulo']}",
             "icone": ICONES_PIN["noticia"],
             "tamanho": 44,
         }
@@ -678,9 +713,15 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
 
-# Geocodifica partida e destino informados para posicionar o mapa e os PINs verdes
-lat_orig, lon_orig, desc_orig, _ = geocodificar_endereco_gsp(end_origem, mun_origem)
-lat_dest, lon_dest, desc_dest, _ = geocodificar_endereco_gsp(end_destino, mun_destino)
+# Coordenadas centrais dos municípios selecionados (evita chamada de rede a cada rerun)
+lat_orig, lon_orig = MUNICIPIOS_GSP_COORDS.get(mun_origem, (-23.5505, -46.6339))
+lat_dest, lon_dest = MUNICIPIOS_GSP_COORDS.get(mun_destino, (-23.5505, -46.6339))
+desc_orig = f"{end_origem.strip()} — {mun_origem}" if end_origem.strip() else mun_origem
+desc_dest = f"{end_destino.strip()} — {mun_destino}" if end_destino.strip() else mun_destino
+
+if st.session_state.foco_trajeto_ativo:
+    lat_orig, lon_orig, desc_orig, _ = geocodificar_endereco_gsp(end_origem, mun_origem)
+    lat_dest, lon_dest, desc_dest, _ = geocodificar_endereco_gsp(end_destino, mun_destino)
 
 if chuva_ativa_mm < 10:
     risco_texto = "Risco Baixo"
@@ -768,7 +809,6 @@ st.markdown(
 
 dados_mapa = []
 
-# PINs verdes de referência da consulta
 dados_mapa.append(
     {
         "lat": lat_orig + 0.0008,
@@ -794,7 +834,6 @@ if (mun_destino != mun_origem) or (end_destino.strip() and end_destino.strip() !
         }
     )
 
-# PINs da comunidade em endereços reais
 for item in st.session_state.ocorrencias_usuarios:
     tem_foto = item.get("foto") is not None
     dados_mapa.append(
@@ -809,7 +848,6 @@ for item in st.session_state.ocorrencias_usuarios:
         }
     )
 
-# PINs de notícias
 for pino in pinos_noticias:
     dados_mapa.append(
         {
@@ -900,3 +938,149 @@ with st.form("form_reportar_alagamento", clear_on_submit=True):
             options=lista_municipios,
             index=idx_sp,
         )
+        endereco_input = st.text_input(
+            "Endereço do alagamento (Rua e número aproximado) *",
+            placeholder="Ex.: Rua Alvarenga, 1000 — Butantã",
+            help="Informe o nome da rua/avenida e altura do número para posicionarmos o PIN exatamente no ponto alagado.",
+        )
+
+    with col_form2:
+        nivel_escolhido = st.selectbox(
+            "Nível da água *",
+            options=NIVEIS_AGUA,
+        )
+        foto_enviada = st.file_uploader(
+            "Foto do local (opcional — verificada automaticamente por IA)",
+            type=["png", "jpg", "jpeg"],
+        )
+        descricao_curta = st.text_area(
+            "Detalhes adicionais do local (até 140 caracteres)",
+            max_chars=140,
+            placeholder="Ex.: Perto do ponto de ônibus, água subindo rápido nas duas faixas.",
+        )
+
+    enviado = st.form_submit_button("Enviar Alerta", type="primary", use_container_width=True)
+
+    if enviado:
+        apelido_limpo = (apelido_input or "").strip()
+        endereco_limpo = (endereco_input or "").strip()
+
+        if not apelido_limpo:
+            st.error("Por favor, preencha o seu apelido público (@username) antes de enviar o alerta.")
+        elif not endereco_limpo:
+            st.error("Por favor, informe o endereço aproximado (rua e número) do ponto de alagamento.")
+        else:
+            foto_bytes = None
+            imagem_aprovada = True
+
+            if foto_enviada is not None:
+                foto_bytes = foto_enviada.getvalue()
+                with st.spinner("🤖 Analisando a imagem com IA para garantir segurança e relevância..."):
+                    imagem_aprovada, mensagem_ia = validar_imagem_com_ia(foto_bytes)
+
+                if not imagem_aprovada:
+                    st.error(f"🚫 {mensagem_ia}")
+
+            if imagem_aprovada:
+                if not apelido_limpo.startswith("@"):
+                    apelido_limpo = f"@{apelido_limpo}"
+
+                with st.spinner("📍 Localizando endereço no mapa da Grande SP..."):
+                    lat_ponto, lon_ponto, _, endereco_exato = geocodificar_endereco_gsp(
+                        endereco_limpo, municipio_escolhido
+                    )
+
+                if not endereco_exato:
+                    deslocamento = (len(st.session_state.ocorrencias_usuarios) % 5) * 0.0022
+                    lat_ponto += deslocamento
+                    lon_ponto -= deslocamento
+
+                novo_id = max([o["id"] for o in st.session_state.ocorrencias_usuarios], default=0) + 1
+                hora_registro = datetime.datetime.now().strftime("%H:%M")
+
+                texto_descricao = (
+                    (descricao_curta or "").strip()
+                    or "Ponto de alagamento informado pela comunidade."
+                )
+
+                nova_ocorrencia = {
+                    "id": novo_id,
+                    "usuario": apelido_limpo,
+                    "municipio": municipio_escolhido,
+                    "endereco": endereco_limpo,
+                    "lat": lat_ponto,
+                    "lon": lon_ponto,
+                    "nivel": nivel_escolhido,
+                    "horario": hora_registro,
+                    "descricao": texto_descricao,
+                    "foto": foto_bytes,
+                    "secou_votos": 0,
+                }
+
+                st.session_state.ocorrencias_usuarios.append(nova_ocorrencia)
+                st.session_state.ultimo_envio_teve_foto = foto_bytes is not None
+                st.session_state.ultimo_endereco_salvo = f"{endereco_limpo} ({municipio_escolhido})"
+                st.session_state.abrir_popup_obrigado = True
+                st.rerun()
+
+# 3. NOTÍCIAS REAIS APÓS O FORMULÁRIO DE REPORT (COM DATA DA NOTÍCIA)
+st.divider()
+st.markdown("### 📰 Notícias Reais — São Paulo e Grande SP")
+st.write("Manchetes recentes da imprensa local focadas na capital e região metropolitana (sem cidades do interior). Passe o mouse nos PINs roxos no mapa para ver os detalhes.")
+
+if not noticias_sp:
+    st.info("Nenhuma manchete recente encontrada agora para SP/Grande SP. Clique em 'Atualizar dados reais agora' na barra lateral.")
+else:
+    for n in noticias_sp:
+        with st.container(border=True):
+            st.markdown(f"**{n['titulo']}**")
+            st.caption(
+                f"🗓️ Publicada em: **{n['data_publicacao']}** • "
+                f"Fonte: {n['fonte']} • "
+                f"📍 Município de referência: **{n['municipio_detectado']}**"
+            )
+            if n["link"]:
+                st.markdown(f"[Abrir notícia]({n['link']})")
+
+# 4. LISTA DE OCORRÊNCIAS DA COMUNIDADE E VALIDAÇÃO
+st.divider()
+st.markdown("### 📋 Picos Reportados pela Comunidade e Validação")
+st.write("A água baixou por aí? Clique em **Já secou**. Com **3 confirmações**, o registro sai do mapa.")
+
+if not st.session_state.ocorrencias_usuarios:
+    st.info("Não há relatos de usuários ativos no momento.")
+else:
+    ocorrencia_para_remover = None
+
+    for item in st.session_state.ocorrencias_usuarios:
+        with st.container(border=True):
+            c_info, c_foto, c_acao = st.columns([4, 2, 2])
+
+            with c_info:
+                tem_foto_tag = "📷 Com foto verificada" if item.get("foto") is not None else "📝 Sem foto"
+                st.markdown(f"**📍 {item['endereco']} ({item['municipio']})** — *{item['nivel']}* • {tem_foto_tag}")
+                st.write(item["descricao"])
+                st.caption(
+                    f"Registrado às {item['horario']} por **{item['usuario']}** • "
+                    f"Confirmações de que secou: **{item['secou_votos']}/3**"
+                )
+
+            with c_foto:
+                if item.get("foto") is not None:
+                    st.image(item["foto"], caption="Foto validada", use_container_width=True)
+                else:
+                    st.caption("Sem foto anexada")
+
+            with c_acao:
+                st.write("")
+                if st.button("✅ Já secou", key=f"secou_{item['id']}", use_container_width=True):
+                    item["secou_votos"] += 1
+                    if item["secou_votos"] >= 3:
+                        ocorrencia_para_remover = item["id"]
+                    st.rerun()
+
+    if ocorrencia_para_remover is not None:
+        st.session_state.ocorrencias_usuarios = [
+            o for o in st.session_state.ocorrencias_usuarios if o["id"] != ocorrencia_para_remover
+        ]
+        st.rerun()
