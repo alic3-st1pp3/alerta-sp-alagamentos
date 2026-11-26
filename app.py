@@ -336,8 +336,7 @@ def normalizar_texto(texto: str) -> str:
 
 def validar_imagem_com_ia(foto_bytes: bytes):
     """
-    Valida se a imagem é segura e relacionada a rua/alagamento usando o Gemini,
-    com retentativa automática e fallback entre modelos caso algum esteja sobrecarregado (503).
+    Valida se a imagem é segura e relacionada a rua/alagamento usando o Gemini.
     """
     api_key = st.secrets.get("GEMINI_API_KEY", None)
     if not api_key:
@@ -345,8 +344,6 @@ def validar_imagem_com_ia(foto_bytes: bytes):
 
     client = genai.Client(api_key=api_key)
     imagem = Image.open(io.BytesIO(foto_bytes))
-
-    # Reduz resolução máxima para agilizar o envio e evitar timeouts
     imagem.thumbnail((1024, 1024))
 
     prompt = (
@@ -359,46 +356,41 @@ def validar_imagem_com_ia(foto_bytes: bytes):
         "- Se for selfie, meme, tela, animal ou foto interna sem relação com via/chuva/alagamento, relacionada_alagamento_ou_via deve ser false."
     )
 
-    modelos_candidatos = ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"]
-    ultimo_erro = None
+    modelo_alvo = "gemini-3.8-flash"
 
-    for modelo in modelos_candidatos:
-        for tentativa in range(2):
-            try:
-                resposta = client.models.generate_content(
-                    model=modelo,
-                    contents=[imagem, prompt],
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        temperature=0.1,
-                    ),
-                )
+    for tentativa in range(2):
+        try:
+            resposta = client.models.generate_content(
+                model=modelo_alvo,
+                contents=[imagem, prompt],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.1,
+                ),
+            )
 
-                resultado = json.loads(resposta.text)
-                segura = bool(resultado.get("segura", False))
-                relacionada = bool(resultado.get("relacionada_alagamento_ou_via", False))
-                motivo = resultado.get("motivo", "Imagem fora dos critérios do sistema.")
+            resultado = json.loads(resposta.text)
+            segura = bool(resultado.get("segura", False))
+            relacionada = bool(resultado.get("relacionada_alagamento_ou_via", False))
+            motivo = resultado.get("motivo", "Imagem fora dos critérios do sistema.")
 
-                if not segura:
-                    return False, "Imagem bloqueada pelo filtro de segurança (conteúdo impróprio detectado)."
-                if not relacionada:
-                    return False, f"Imagem recusada: {motivo}. Envie apenas fotos reais da rua ou do alagamento."
+            if not segura:
+                return False, "Imagem bloqueada pelo filtro de segurança (conteúdo impróprio detectado)."
+            if not relacionada:
+                return False, f"Imagem recusada: {motivo}. Envie apenas fotos reais da rua ou do alagamento."
 
-                return True, "Imagem validada com sucesso."
-            except Exception as e:
-                ultimo_erro = e
-                erro_str = str(e)
-                # Se for erro temporário de sobrecarga (503 / UNAVAILABLE), aguarda brevemente e tenta o próximo
-                if "503" in erro_str or "UNAVAILABLE" in erro_str or "429" in erro_str:
-                    time.sleep(1.2)
+            return True, "Imagem validada com sucesso."
+        except Exception as e:
+            erro_str = str(e)
+            if "503" in erro_str or "UNAVAILABLE" in erro_str or "429" in erro_str:
+                if tentativa == 0:
+                    time.sleep(1.5)
                     continue
-                break
-
-    return (
-        False,
-        f"Os servidores de validação de imagem estão com alta demanda no momento ({ultimo_erro}). "
-        "Aguarde alguns segundos e tente enviar novamente.",
-    )
+                return (
+                    False,
+                    f"O modelo {modelo_alvo} está com pico de demanda agora. Aguarde alguns segundos e tente de novo.",
+                )
+            return False, f"Erro ao chamar o modelo {modelo_alvo}: {erro_str}"  
 
 
 @st.dialog("Alerta enviado com sucesso!")
