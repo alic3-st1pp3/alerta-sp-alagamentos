@@ -2,6 +2,7 @@ import datetime
 import io
 import json
 import re
+import time
 import urllib.parse
 import feedparser
 from google import genai
@@ -31,7 +32,7 @@ st.markdown(
             font-size: 16px;
         }
 
-        /* Barra lateral clara e legível sem precisar selecionar texto */
+        /* Barra lateral clara e legível */
         section[data-testid="stSidebar"],
         section[data-testid="stSidebar"] > div,
         [data-testid="stSidebarContent"] {
@@ -67,7 +68,7 @@ st.markdown(
             color: #1E293B;
         }
 
-        /* Cabeçalho azul escuro: garante texto branco/claro com alto contraste */
+        /* Cabeçalho azul escuro */
         .header-box {
             background-color: #1E3A8A !important;
             color: #FFFFFF !important;
@@ -83,6 +84,7 @@ st.markdown(
         .header-box p {
             color: #F1F5F9 !important;
             font-size: 17px;
+            line-height: 1.5;
             margin: 0;
         }
 
@@ -139,6 +141,15 @@ st.markdown(
             color: #0F172A !important;
             font-size: 15px;
             margin-bottom: 14px;
+        }
+        .jornada-dica-box {
+            background-color: #E0F2FE !important;
+            border-left: 4px solid #0284C7;
+            padding: 10px 12px;
+            border-radius: 8px;
+            color: #0F172A !important;
+            font-size: 14px;
+            margin-top: 8px;
         }
         .legenda-box {
             background-color: #FFFFFF !important;
@@ -324,47 +335,70 @@ def normalizar_texto(texto: str) -> str:
 
 
 def validar_imagem_com_ia(foto_bytes: bytes):
-    """Valida se a imagem é segura e relacionada a rua/alagamento usando o Gemini."""
+    """
+    Valida se a imagem é segura e relacionada a rua/alagamento usando o Gemini,
+    com retentativa automática e fallback entre modelos caso algum esteja sobrecarregado (503).
+    """
     api_key = st.secrets.get("GEMINI_API_KEY", None)
     if not api_key:
         return False, "Chave GEMINI_API_KEY não configurada nos Secrets do Streamlit."
 
-    try:
-        client = genai.Client(api_key=api_key)
-        imagem = Image.open(io.BytesIO(foto_bytes))
+    client = genai.Client(api_key=api_key)
+    imagem = Image.open(io.BytesIO(foto_bytes))
 
-        prompt = (
-            "Analise esta imagem enviada para um sistema público de alerta de alagamentos em São Paulo. "
-            "Responda APENAS em JSON válido com duas chaves booleanas e uma string curta em português:\n"
-            '{"segura": true/false, "relacionada_alagamento_ou_via": true/false, "motivo": "explicação curta"}\n'
-            "Regras:\n"
-            "- segura deve ser false se houver nudez, pornografia, conteúdo sexual, violência explícita ou ofensivo.\n"
-            "- relacionada_alagamento_ou_via deve ser true APENAS se a foto mostrar rua, avenida, estação, calçada, chuva, poça, enchente ou trânsito afetado por água.\n"
-            "- Se for selfie, meme, tela, animal ou foto interna sem relação com via/chuva/alagamento, relacionada_alagamento_ou_via deve ser false."
-        )
+    # Reduz resolução máxima para agilizar o envio e evitar timeouts
+    imagem.thumbnail((1024, 1024))
 
-        resposta = client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=[imagem, prompt],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0.1,
-            ),
-        )
+    prompt = (
+        "Analise esta imagem enviada para um sistema público de alerta de alagamentos em São Paulo. "
+        "Responda APENAS em JSON válido com duas chaves booleanas e uma string curta em português:\n"
+        '{"segura": true/false, "relacionada_alagamento_ou_via": true/false, "motivo": "explicação curta"}\n'
+        "Regras:\n"
+        "- segura deve ser false se houver nudez, pornografia, conteúdo sexual, violência explícita ou ofensivo.\n"
+        "- relacionada_alagamento_ou_via deve ser true APENAS se a foto mostrar rua, avenida, estação, calçada, chuva, poça, enchente ou trânsito afetado por água.\n"
+        "- Se for selfie, meme, tela, animal ou foto interna sem relação com via/chuva/alagamento, relacionada_alagamento_ou_via deve ser false."
+    )
 
-        resultado = json.loads(resposta.text)
-        segura = bool(resultado.get("segura", False))
-        relacionada = bool(resultado.get("relacionada_alagamento_ou_via", False))
-        motivo = resultado.get("motivo", "Imagem fora dos critérios do sistema.")
+    modelos_candidatos = ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"]
+    ultimo_erro = None
 
-        if not segura:
-            return False, "Imagem bloqueada pelo filtro de segurança (conteúdo impróprio detectado)."
-        if not relacionada:
-            return False, f"Imagem recusada: {motivo}. Envie apenas fotos reais da rua ou do alagamento."
+    for modelo in modelos_candidatos:
+        for tentativa in range(2):
+            try:
+                resposta = client.models.generate_content(
+                    model=modelo,
+                    contents=[imagem, prompt],
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        temperature=0.1,
+                    ),
+                )
 
-        return True, "Imagem validada com sucesso."
-    except Exception as e:
-        return False, f"Não foi possível validar a imagem agora ({e}). Tente novamente."
+                resultado = json.loads(resposta.text)
+                segura = bool(resultado.get("segura", False))
+                relacionada = bool(resultado.get("relacionada_alagamento_ou_via", False))
+                motivo = resultado.get("motivo", "Imagem fora dos critérios do sistema.")
+
+                if not segura:
+                    return False, "Imagem bloqueada pelo filtro de segurança (conteúdo impróprio detectado)."
+                if not relacionada:
+                    return False, f"Imagem recusada: {motivo}. Envie apenas fotos reais da rua ou do alagamento."
+
+                return True, "Imagem validada com sucesso."
+            except Exception as e:
+                ultimo_erro = e
+                erro_str = str(e)
+                # Se for erro temporário de sobrecarga (503 / UNAVAILABLE), aguarda brevemente e tenta o próximo
+                if "503" in erro_str or "UNAVAILABLE" in erro_str or "429" in erro_str:
+                    time.sleep(1.2)
+                    continue
+                break
+
+    return (
+        False,
+        f"Os servidores de validação de imagem estão com alta demanda no momento ({ultimo_erro}). "
+        "Aguarde alguns segundos e tente enviar novamente.",
+    )
 
 
 @st.dialog("Alerta enviado com sucesso!")
@@ -464,7 +498,7 @@ if "ocorrencias_usuarios" not in st.session_state:
             "lon": -46.4733,
             "nivel": "Intransitável - Água alta",
             "horario": hora_atual,
-            "descricao": "Água acumulando perto da estação; ônibus com passagem lenta.",
+            "descricao": "Av. José Pinheiro Borges, altura do nº 1200 — água acumulando perto da estação.",
             "foto": None,
             "secou_votos": 0,
         },
@@ -476,7 +510,7 @@ if "ocorrencias_usuarios" not in st.session_state:
             "lon": -46.7036,
             "nivel": "Água na calçada",
             "horario": hora_atual,
-            "descricao": "Calçada tomada pela água e trânsito parado nos arredores.",
+            "descricao": "Rua Guaicurus, altura do nº 500 — calçada tomada pela água e trânsito parado.",
             "foto": None,
             "secou_votos": 0,
         },
@@ -514,12 +548,16 @@ for idx, n in enumerate(noticias_sp):
         }
     )
 
-# Cabeçalho principal
+# Cabeçalho principal (Ajuste 2: descritivo mais assertivo baseado no PRD)
 st.markdown(
     """
     <div class="header-box">
         <h1>🌧️ Alerta SP — Mobilidade Segura em Dias de Chuva</h1>
-        <p>Dados reais de chuva em São Paulo, notícias locais, relatos validados por IA e mapa de pontos críticos.</p>
+        <p>
+            Desenvolvido para apoiar quem se locomove em dias úteis pela cidade de São Paulo e corre o risco de enfrentar
+            bloqueios, atrasos e transtornos no trajeto <strong>casa ↔ trabalho</strong> por conta dos alagamentos urbanos.
+            Acompanhe a previsão real de chuva, alertas da comunidade e pontos críticos antes de sair.
+        </p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -557,6 +595,15 @@ with st.sidebar:
     if usar_simulacao:
         chuva_ativa_mm = float(
             st.slider("Chuva simulada (mm)", min_value=0, max_value=80, value=int(chuva_real_mm), step=1)
+        )
+        # Ajuste 3: orienta o usuário a olhar o resultado na página principal
+        st.markdown(
+            """
+            <div class="jornada-dica-box">
+                👉 <strong>Veja o resultado na tela principal:</strong> o impacto dessa simulação no seu trajeto aparece atualizado no cartão <strong>"🚦 Nível de Risco no Trajeto"</strong> no topo do painel à direita.
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
     else:
         chuva_ativa_mm = chuva_real_mm
@@ -747,8 +794,8 @@ st.markdown(
 st.markdown(
     """
     <div class="privacidade-box">
-        🔒 <strong>Privacidade e Segurança:</strong> Usamos apenas o seu apelido público (<code>@username</code>).
-        Não pedimos CPF nem endereço exato. Fotos enviadas passam por <strong>verificação automática por IA</strong> para garantir que sejam registros reais de ruas ou alagamentos.
+        🔒 <strong>Privacidade e Segurança:</strong> Usamos apenas o seu apelido público (<code>@username</code>) e a referência da via alagada.
+        Não pedimos CPF nem o seu endereço pessoal. Fotos enviadas passam por <strong>verificação automática por IA</strong> para garantir que sejam registros reais de ruas ou alagamentos.
     </div>
     """,
     unsafe_allow_html=True,
@@ -777,10 +824,12 @@ with st.form("form_reportar_alagamento", clear_on_submit=True):
             type=["png", "jpg", "jpeg"],
         )
 
+    # Ajuste 6: orienta a indicar rua e número aproximado do ponto alagado
     descricao_curta = st.text_area(
-        "Descrição curta (opcional — até 140 caracteres)",
+        "Rua, altura do número e detalhes do ponto alagado (até 140 caracteres)",
         max_chars=140,
-        placeholder="Ex.: Perto do ponto de ônibus, água subindo rápido na via.",
+        placeholder="Ex.: Rua Alvarenga, altura do número 1000 — perto do ponto de ônibus, água subindo rápido.",
+        help="Como os distritos de SP são grandes, indique a rua e um número de referência próximo ao alagamento.",
     )
 
     enviado = st.form_submit_button("Enviar Alerta", type="primary", use_container_width=True)
