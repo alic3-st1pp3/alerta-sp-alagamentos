@@ -896,4 +896,7 @@ with st.form("form_reportar_alagamento", clear_on_submit=True):
             placeholder="Ex.: @maria_zl ou joao_abc",
         )
         municipio_escolhido = st.selectbox(
-            "Município (Grande SP
+            "Município (Grande SP) *",
+            options=lista_municipios,
+            index=idx_sp,
+        )
