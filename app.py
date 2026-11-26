@@ -1,6 +1,7 @@
 import datetime
 import io
 import json
+import math
 import re
 import time
 import urllib.parse
@@ -150,6 +151,16 @@ st.markdown(
             color: #0F172A !important;
             font-size: 14px;
             margin-top: 8px;
+        }
+        .foco-mapa-box {
+            background-color: #ECFDF5 !important;
+            border: 1.5px solid #10B981;
+            border-left: 5px solid #059669;
+            padding: 12px 16px;
+            border-radius: 10px;
+            color: #064E3B !important;
+            font-size: 15px;
+            margin-bottom: 12px;
         }
         .legenda-box {
             background-color: #FFFFFF !important;
@@ -326,6 +337,54 @@ NIVEIS_AGUA = [
 ]
 
 
+def criar_icone_pin_svg(cor_hex: str) -> dict:
+    """Gera um ícone SVG em formato de PIN (gota com ponta inferior) para o PyDeck IconLayer."""
+    svg = f"""
+    <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+        <path d="M32 4C18.7 4 8 14.7 8 28c0 16.5 24 32 24 32s24-15.5 24-32C56 14.7 45.3 4 32 4z"
+              fill="{cor_hex}" stroke="#FFFFFF" stroke-width="3.5"/>
+        <circle cx="32" cy="26" r="9.5" fill="#FFFFFF"/>
+    </svg>
+    """.strip()
+    url_svg = "data:image/svg+xml;charset=utf-8," + urllib.parse.quote(svg)
+    return {
+        "url": url_svg,
+        "width": 64,
+        "height": 64,
+        "anchorY": 60,
+        "anchorX": 32,
+    }
+
+
+ICONES_PIN = {
+    "com_foto": criar_icone_pin_svg("#DC2626"),   # Vermelho
+    "sem_foto": criar_icone_pin_svg("#F97316"),   # Laranja
+    "noticia": criar_icone_pin_svg("#7C3AED"),    # Roxo
+    "trajeto": criar_icone_pin_svg("#059669"),    # Verde (referência casa/trabalho)
+}
+
+
+def calcular_enquadramento_trajeto(distrito_a: str, distrito_b: str):
+    """Calcula o centro geográfico e o zoom ideal para visualizar ambos os distritos no mapa."""
+    lat_a, lon_a = DISTRITOS_SP.get(distrito_a, (-23.5505, -46.6339))
+    lat_b, lon_b = DISTRITOS_SP.get(distrito_b, (-23.5505, -46.6339))
+
+    lat_centro = (lat_a + lat_b) / 2
+    lon_centro = (lon_a + lon_b) / 2
+
+    distancia_graus = math.hypot(lat_a - lat_b, lon_a - lon_b)
+    if distancia_graus < 0.02:
+        zoom = 13.0
+    elif distancia_graus < 0.06:
+        zoom = 12.1
+    elif distancia_graus < 0.14:
+        zoom = 11.4
+    else:
+        zoom = 10.7
+
+    return lat_centro, lon_centro, zoom
+
+
 def normalizar_texto(texto: str) -> str:
     mapa_acentos = str.maketrans(
         "áàãâäéèêëíìîïóòõôöúùûüçÁÀÃÂÄÉÈÊËÍÌÎÏÓÒÕÔÖÚÙÛÜÇ",
@@ -335,9 +394,7 @@ def normalizar_texto(texto: str) -> str:
 
 
 def validar_imagem_com_ia(foto_bytes: bytes):
-    """
-    Valida se a imagem é segura e relacionada a rua/alagamento usando o Gemini.
-    """
+    """Valida se a imagem é segura e relacionada a rua/alagamento usando o Gemini."""
     api_key = st.secrets.get("GEMINI_API_KEY", None)
     if not api_key:
         return False, "Chave GEMINI_API_KEY não configurada nos Secrets do Streamlit."
@@ -390,7 +447,7 @@ def validar_imagem_com_ia(foto_bytes: bytes):
                     False,
                     f"O modelo {modelo_alvo} está com pico de demanda agora. Aguarde alguns segundos e tente de novo.",
                 )
-            return False, f"Erro ao chamar o modelo {modelo_alvo}: {erro_str}"  
+            return False, f"Erro ao chamar o modelo {modelo_alvo}: {erro_str}"
 
 
 @st.dialog("Alerta enviado com sucesso!")
@@ -514,6 +571,12 @@ if "abrir_popup_obrigado" not in st.session_state:
 if "ultimo_envio_teve_foto" not in st.session_state:
     st.session_state.ultimo_envio_teve_foto = False
 
+if "foco_trajeto_ativo" not in st.session_state:
+    st.session_state.foco_trajeto_ativo = False
+
+if "mapa_render_id" not in st.session_state:
+    st.session_state.mapa_render_id = 0
+
 if st.session_state.abrir_popup_obrigado:
     teve_foto_flag = st.session_state.ultimo_envio_teve_foto
     st.session_state.abrir_popup_obrigado = False
@@ -536,11 +599,12 @@ for idx, n in enumerate(noticias_sp):
             "lat": lat_b + desloc,
             "lon": lon_b - desloc,
             "resumo": f"{n['fonte']}: {n['titulo']}",
-            "cor": [139, 92, 246, 230],
+            "icone": ICONES_PIN["noticia"],
+            "tamanho": 44,
         }
     )
 
-# Cabeçalho principal (Ajuste 2: descritivo mais assertivo baseado no PRD)
+# Cabeçalho principal
 st.markdown(
     """
     <div class="header-box">
@@ -574,6 +638,12 @@ with st.sidebar:
     distrito_moradia = st.selectbox("Distrito onde você mora (SP Capital)", options=lista_distritos, index=idx_moradia)
     distrito_trabalho = st.selectbox("Distrito onde você trabalha (SP Capital)", options=lista_distritos, index=idx_trabalho)
 
+    # Ajuste 1: Botão "Ver no mapa" logo após a seleção do trajeto
+    if st.button("📍 Ver no mapa", type="primary", use_container_width=True):
+        st.session_state.foco_trajeto_ativo = True
+        st.session_state.mapa_render_id += 1
+        st.rerun()
+
     st.divider()
     st.subheader("🌦️ Clima Real (São Paulo)")
     if clima_ok:
@@ -588,7 +658,6 @@ with st.sidebar:
         chuva_ativa_mm = float(
             st.slider("Chuva simulada (mm)", min_value=0, max_value=80, value=int(chuva_real_mm), step=1)
         )
-        # Ajuste 3: orienta o usuário a olhar o resultado na página principal
         st.markdown(
             """
             <div class="jornada-dica-box">
@@ -683,17 +752,28 @@ with col3:
         unsafe_allow_html=True,
     )
 
-# 1. MAPA (Focado no município de SP)
+# 1. MAPA COM PINs REAIS E ENQUADRAMENTO DE TRAJETO
 st.markdown("### 🗺️ Mapa de Alagamentos e Notícias — Município de São Paulo")
 st.caption("Filtro de distritos e alertas de trajeto válidos exclusivamente para a cidade de São Paulo (capital).")
+
+if st.session_state.foco_trajeto_ativo:
+    st.markdown(
+        f"""
+        <div class="foco-mapa-box">
+            📍 <strong>Mapa centralizado no seu trajeto:</strong> Enquadrando os distritos de <strong>{distrito_moradia}</strong> (Moradia) e <strong>{distrito_trabalho}</strong> (Trabalho) — marcados com PINs verdes de referência.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 st.markdown(
     """
     <div class="legenda-box">
-        <strong>Legenda dos marcadores:</strong> &nbsp;&nbsp;
-        🔴 <strong>Vermelho:</strong> Comunidade <strong>com foto</strong> &nbsp;&nbsp;|&nbsp;&nbsp;
-        🟠 <strong>Laranja:</strong> Comunidade <strong>sem foto</strong> &nbsp;&nbsp;|&nbsp;&nbsp;
-        🟣 <strong>Roxo:</strong> Notícia real de chuva/alagamento (SP / Grande SP)
+        <strong>Legenda dos PINs:</strong> &nbsp;&nbsp;
+        📍🔴 <strong>Vermelho:</strong> Comunidade <strong>com foto</strong> &nbsp;&nbsp;|&nbsp;&nbsp;
+        📍🟠 <strong>Laranja:</strong> Comunidade <strong>sem foto</strong> &nbsp;&nbsp;|&nbsp;&nbsp;
+        📍🟣 <strong>Roxo:</strong> Notícia real (SP / Grande SP) &nbsp;&nbsp;|&nbsp;&nbsp;
+        📍🟢 <strong>Verde:</strong> Pontos do seu trajeto (Casa / Trabalho)
     </div>
     """,
     unsafe_allow_html=True,
@@ -701,6 +781,36 @@ st.markdown(
 
 dados_mapa = []
 
+# PINs de referência do trajeto (Casa e Trabalho)
+lat_casa, lon_casa = DISTRITOS_SP.get(distrito_moradia, (-23.5505, -46.6339))
+lat_trab, lon_trab = DISTRITOS_SP.get(distrito_trabalho, (-23.5505, -46.6339))
+
+dados_mapa.append(
+    {
+        "lat": lat_casa + 0.0018,
+        "lon": lon_casa + 0.0018,
+        "distrito": distrito_moradia,
+        "tipo_label": "🏠 Seu Trajeto — Moradia",
+        "resumo": f"Ponto de partida selecionado: {distrito_moradia}",
+        "icone": ICONES_PIN["trajeto"],
+        "tamanho": 44,
+    }
+)
+
+if distrito_trabalho != distrito_moradia:
+    dados_mapa.append(
+        {
+            "lat": lat_trab + 0.0018,
+            "lon": lon_trab + 0.0018,
+            "distrito": distrito_trabalho,
+            "tipo_label": "💼 Seu Trajeto — Trabalho",
+            "resumo": f"Ponto de destino selecionado: {distrito_trabalho}",
+            "icone": ICONES_PIN["trajeto"],
+            "tamanho": 44,
+        }
+    )
+
+# PINs da comunidade
 for item in st.session_state.ocorrencias_usuarios:
     tem_foto = item.get("foto") is not None
     dados_mapa.append(
@@ -710,10 +820,12 @@ for item in st.session_state.ocorrencias_usuarios:
             "distrito": item["distrito"],
             "tipo_label": "Comunidade (com foto)" if tem_foto else "Comunidade (sem foto)",
             "resumo": f"{item['nivel']} — {item['descricao']} ({item['usuario']})",
-            "cor": [220, 38, 38, 235] if tem_foto else [249, 115, 22, 235],
+            "icone": ICONES_PIN["com_foto"] if tem_foto else ICONES_PIN["sem_foto"],
+            "tamanho": 48,
         }
     )
 
+# PINs de notícias
 for pino in pinos_noticias:
     dados_mapa.append(
         {
@@ -722,19 +834,23 @@ for pino in pinos_noticias:
             "distrito": pino["distrito"],
             "tipo_label": pino["tipo_label"],
             "resumo": pino["resumo"],
-            "cor": pino["cor"],
+            "icone": pino["icone"],
+            "tamanho": pino["tamanho"],
         }
     )
 
 df_mapa = pd.DataFrame(dados_mapa)
-lat_foco, lon_foco = DISTRITOS_SP.get(distrito_moradia, (-23.5505, -46.6339))
 
-layer = pdk.Layer(
-    "ScatterplotLayer",
+# Centraliza no trajeto selecionado
+lat_foco, lon_foco, zoom_foco = calcular_enquadramento_trajeto(distrito_moradia, distrito_trabalho)
+
+layer_pins = pdk.Layer(
+    "IconLayer",
     data=df_mapa,
+    get_icon="icone",
     get_position="[lon, lat]",
-    get_color="cor",
-    get_radius=420,
+    get_size="tamanho",
+    size_scale=1,
     pickable=True,
     auto_highlight=True,
 )
@@ -742,9 +858,9 @@ layer = pdk.Layer(
 view_state = pdk.ViewState(
     latitude=lat_foco,
     longitude=lon_foco,
-    zoom=11.3,
+    zoom=zoom_foco,
     min_zoom=10.3,
-    max_zoom=15.0,
+    max_zoom=16.0,
     pitch=0,
 )
 
@@ -763,11 +879,12 @@ st.pydeck_chart(
     pdk.Deck(
         map_style="light",
         initial_view_state=view_state,
-        layers=[layer],
+        layers=[layer_pins],
         tooltip=tooltip,
     ),
     use_container_width=True,
-    height=480,
+    height=490,
+    key=f"mapa_sp_{st.session_state.mapa_render_id}_{distrito_moradia}_{distrito_trabalho}",
 )
 
 # 2. REPORT DE USUÁRIOS LOGO ABAIXO DO MAPA
@@ -816,7 +933,6 @@ with st.form("form_reportar_alagamento", clear_on_submit=True):
             type=["png", "jpg", "jpeg"],
         )
 
-    # Ajuste 6: orienta a indicar rua e número aproximado do ponto alagado
     descricao_curta = st.text_area(
         "Rua, altura do número e detalhes do ponto alagado (até 140 caracteres)",
         max_chars=140,
@@ -878,7 +994,7 @@ with st.form("form_reportar_alagamento", clear_on_submit=True):
 # 3. NOTÍCIAS REAIS APÓS O FORMULÁRIO DE REPORT
 st.divider()
 st.markdown("### 📰 Notícias Reais — São Paulo e Grande SP")
-st.write("Manchetes recentes da imprensa local focadas na capital e região metropolitana (sem cidades do interior). Passe o mouse nos pontos roxos no mapa para ver os detalhes.")
+st.write("Manchetes recentes da imprensa local focadas na capital e região metropolitana (sem cidades do interior). Passe o mouse nos PINs roxos no mapa para ver os detalhes.")
 
 if not noticias_sp:
     st.info("Nenhuma manchete recente encontrada agora para SP/Grande SP. Clique em 'Atualizar dados reais agora' na barra lateral.")
